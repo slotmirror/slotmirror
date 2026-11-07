@@ -1,5 +1,4 @@
 import * as z from "zod/mini";
-import { errorLogFields } from "./audit";
 import { detailLevelResolver, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
 import {
@@ -18,6 +17,7 @@ import {
   localInstant,
   offsetAt,
 } from "./sync/working-hours";
+import { carrier, log } from "./telemetry";
 
 /**
  * The MCP tool `list_events`: the user's events across all source calendars of all connected
@@ -668,12 +668,13 @@ async function readCalendar(
     const read = await accountSync(env, source.accountId).readCompareEvents(
       source.remoteId,
       window,
+      carrier(),
     );
     if (read.kind === "throttled") return failure("throttled", read.retryAfterMs);
     if (read.kind === "unavailable") return failure("gone");
     return { source, events: read.events };
   } catch (error) {
-    console.error("Reading events for list_events failed", ...errorLogFields(error));
+    log.error("mcp.list_events_read_failed", { accountId: source.accountId }, error);
     return failure("failed");
   }
 }
