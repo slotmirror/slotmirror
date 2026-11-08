@@ -82,8 +82,8 @@ importers:
         specifier: 7.4.4
         version: 7.4.4(@astrojs/markdown-remark@7.3.5)(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
       posthog-js:
-        specifier: 1.444.2
-        version: 1.444.2
+        specifier: 1.446.0
+        version: 1.446.0
       sharp:
         specifier: 0.35.5
         version: 0.35.5(@types/node@24.19.2)
@@ -1129,14 +1129,14 @@ packages:
   '@poppinss/exception@1.2.3':
     resolution: {integrity: sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==}
 
-  '@posthog/browser-common@0.10.2':
-    resolution: {integrity: sha512-ieHSMmY4xG+HfkMTrT9yZoG0NMBWyA4aXMFPCuOOV+xRe706+zoPuwqmNHXv7LGXfi6CvOv4qksEoPNWfP359Q==}
+  '@posthog/browser-common@0.10.6':
+    resolution: {integrity: sha512-AKJeONaS5OfEKJDDBsq8OWSSPnHW1AFyHYg6bd3q+Q6KCddA6SlVSylFfui161mquhU3tfgraMgSBs4LgFShQA==}
 
-  '@posthog/core@1.62.0':
-    resolution: {integrity: sha512-KjNwGC7s0141wnWWHubNMdg1lOhZjqKRw2OTNstuzdVvNDfvv2RbFJQSSvvABmbCmTXwlMpdnbb/M/aAigDnNQ==}
+  '@posthog/core@1.63.1':
+    resolution: {integrity: sha512-LcUSRUM8zoTdwQFH1kWDQDMOFwiFjJ2lVxOOtpOwp6ezcHdr94KjO84YcoEeYtMuIFVMjasDFWyrOuuMAAg52g==}
 
-  '@posthog/types@1.419.0':
-    resolution: {integrity: sha512-XX7zRYt/vK8AzaD6V+oDquAzacZf5exJv971dja9En8Qf6g84Qvc3rpT0w6hDYYLWrjaSSkdjFfvvoXI0ouJDg==}
+  '@posthog/types@1.420.0':
+    resolution: {integrity: sha512-WrfsR3hynbNOkQor6TrQJrI+7UzStZs2rjFzQ+xK9mRCUH6TLMLfBSR+ibGoKreatb76Uh30b6lSZLWbOgdTsg==}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     resolution: {integrity: sha512-ia3DwAs0OsMGS7+IConptSiyk9pEXkOx/AbJ2n/lAGxH3QkWQus1t8d7gnAT38FCU2sQu8lUbeR6AiZFv4JxaA==}
@@ -2477,8 +2477,8 @@ packages:
     resolution: {integrity: sha512-LJlKCCAUFKOuZxipUdYw1NzIITEsPcgyOG9LkvRJvuKj/bRzbuRY0ARXvL0pWGpsZvn8jku+LMep2eU0seHp8g==}
     engines: {node: ^10 || ^12 || >=14}
 
-  posthog-js@1.444.2:
-    resolution: {integrity: sha512-gsG9GllefB1o0brQNND4shWbyfE4xmp1Yh791yrDxPIi4OgB6qQ96263bajVjfI8tWKM9wlxPTRwkPQZ1gA/Ug==}
+  posthog-js@1.446.0:
+    resolution: {integrity: sha512-qyOQrupMynfZXNwWVFlM151LPmdEF2rHZMAaNHsL1wsl980WanA9JDtASWGgkkR4skRgTnkeRZG85+rR6jpxcg==}
     peerDependencies:
       '@types/react': '>=16.8.0'
       react: '>=16.8.0'
@@ -3906,19 +3906,20 @@ snapshots:
 
   '@poppinss/exception@1.2.3': {}
 
-  '@posthog/browser-common@0.10.2':
+  '@posthog/browser-common@0.10.6':
     dependencies:
-      '@posthog/core': 1.62.0
-      '@posthog/types': 1.419.0
+      '@posthog/core': 1.63.1
+      '@posthog/types': 1.420.0
+      dompurify: 3.4.17
       preact: 10.29.8
     transitivePeerDependencies:
       - preact-render-to-string
 
-  '@posthog/core@1.62.0':
+  '@posthog/core@1.63.1':
     dependencies:
-      '@posthog/types': 1.419.0
+      '@posthog/types': 1.420.0
 
-  '@posthog/types@1.419.0': {}
+  '@posthog/types@1.420.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
     optional: true
@@ -5620,11 +5621,11 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
-  posthog-js@1.444.2:
+  posthog-js@1.446.0:
     dependencies:
-      '@posthog/browser-common': 0.10.2
-      '@posthog/core': 1.62.0
-      '@posthog/types': 1.419.0
+      '@posthog/browser-common': 0.10.6
+      '@posthog/core': 1.63.1
+      '@posthog/types': 1.420.0
       core-js: 3.51.0
       dompurify: 3.4.17
       fflate: 0.4.9
