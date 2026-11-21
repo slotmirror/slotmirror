@@ -5,7 +5,7 @@ import { authenticateToken, reserveToolCall, settleToolCall } from "./api-tokens
 import type { AppEnv } from "./app-env";
 import { errorLogFields } from "./audit";
 import { APP_NAME } from "./brand";
-import { mcpEnabled, setupStatus } from "./config";
+import { mcpEnabled, mcpEventsEnabled, setupStatus } from "./config";
 import { countingRows } from "./d1-rows";
 import {
   authenticateAccessToken,
@@ -15,9 +15,16 @@ import {
   resourceMetadataUrl,
 } from "./mcp-oauth";
 import { i18nFor, type Messages } from "./i18n";
+import {
+  LIST_EVENTS_INPUT_SCHEMA,
+  listEvents,
+  MAX_WINDOW_DAYS,
+  parseListEventsInput,
+  type ListEventsProblem,
+} from "./mcp-events";
 import outputSchemas from "./mcp-output-schemas.json";
 import { readAccounts, readRules, readSyncStatus } from "./read-model";
-import { can, permitted } from "./permissions";
+import { can, credentialActions, permitted, type Action } from "./permissions";
 import type { CurrentUser } from "./users";
 import { buildVersionLabel } from "./version";
 
@@ -63,34 +70,104 @@ type RequestId = string | number | undefined;
 
 const SERVER_INFO = () => ({ name: APP_NAME, version: buildVersionLabel() ?? "dev" });
 
+/** Why a tool refused its arguments. Each has a text in the catalog that the model can read. */
+type Problem = "noArguments" | ListEventsProblem;
+
+type ToolRun = (env: Env, user: CurrentUser) => Promise<{ data: object } | { problem: Problem }>;
+
+interface Tool {
+  name: keyof Messages["mcp"]["tools"];
+  action: Action;
+  inputSchema: object;
+  /** The tool reads the calendars at the providers, not only the deployment's database. */
+  openWorld: boolean;
+  /** Check the arguments before the call counts toward any limit; then return the call. */
+  prepare(args: unknown): { problem: Problem } | { run: ToolRun };
+}
+
+const NO_INPUT = { type: "object", properties: {}, additionalProperties: false };
+
+/** A tool without arguments. Any argument, also an empty list, is refused. */
+function withoutInput(read: (env: Env, user: CurrentUser) => Promise<object>): Tool["prepare"] {
+  return (args) =>
+    typeof args !== "object" || args === null || Array.isArray(args) || Object.keys(args).length > 0
+      ? { problem: "noArguments" }
+      : { run: async (env, user) => ({ data: await read(env, user) }) };
+}
+
 /**
- * `outputSchema` of each tool: JSON Schema 2020-12 of the strict answer shapes in `read-model.ts`.
- * The file is static, because `z.toJSONSchema` adds 10 KB gzip and CPU to every isolate. A test
- * fails if the file and the shapes differ.
+ * The tools in a fixed order. `outputSchema` of each tool: JSON Schema 2020-12 of the strict answer
+ * shapes in `read-model.ts`. The file is static, because `z.toJSONSchema` adds 10 KB gzip and CPU
+ * to every isolate. A test fails if the file and the shapes differ.
  */
-const TOOLS = [
+const TOOLS: readonly Tool[] = [
   {
     name: "list_accounts",
     action: "mcp:read",
-    run: (env: Env, user: CurrentUser) => readAccounts(env.DB, user.id),
+    inputSchema: NO_INPUT,
+    openWorld: false,
+    prepare: withoutInput((env, user) => readAccounts(env.DB, user.id)),
   },
   {
     name: "list_rules",
     action: "mcp:read",
-    run: (env: Env, user: CurrentUser) => readRules(env, user.id),
+    inputSchema: NO_INPUT,
+    openWorld: false,
+    prepare: withoutInput((env, user) => readRules(env, user.id)),
   },
   {
     name: "get_sync_status",
     action: "mcp:read",
-    run: (env: Env, user: CurrentUser) => readSyncStatus(env.DB, user.id),
+    inputSchema: NO_INPUT,
+    openWorld: false,
+    prepare: withoutInput((env, user) => readSyncStatus(env.DB, user.id)),
   },
-] as const;
+  {
+    name: "list_events",
+    action: "events:read",
+    inputSchema: LIST_EVENTS_INPUT_SCHEMA,
+    openWorld: true,
+    prepare: (args) => {
+      const parsed = parseListEventsInput(args ?? {});
+      if ("problem" in parsed) return parsed;
+      return {
+        run: async (env, user) => {
+          const result = await listEvents(env, user.id, parsed.ok);
+          return "problem" in result ? result : { data: result.ok };
+        },
+      };
+    },
+  },
+];
 
-/** The tools the request's user may see and call. A tool the user may not call does not exist. */
-function toolsOf(c: Context<AppEnv>) {
+/**
+ * The tools the request may see and call. A tool the user may not call does not exist. Both the
+ * user's role and the credential decide: a token or app that the user did not allow to read events
+ * does not see `list_events`, and neither does any credential without MCP_EVENTS_ENABLED=1.
+ */
+function toolsOf(c: Context<AppEnv>): Tool[] {
   const user = c.get("user");
   if (!user) throw new Error("the MCP route requires a user");
-  return permitted(user, TOOLS);
+  const granted = credentialActions(c.get("credentialScope") ?? "");
+  const events = mcpEventsEnabled(c.env);
+  return permitted(user, TOOLS).filter(
+    (tool) => granted.has(tool.action) && (tool.action !== "events:read" || events),
+  );
+}
+
+function problemText(t: Messages["mcp"], problem: Problem): string {
+  switch (problem) {
+    case "noArguments":
+      return t.errors.unexpectedArguments;
+    case "arguments":
+      return t.errors.eventArguments;
+    case "time":
+      return t.errors.eventTime;
+    case "zone":
+      return t.errors.eventZone;
+    case "window":
+      return t.errors.eventWindow(MAX_WINDOW_DAYS);
+  }
 }
 
 function messages(c: Context<AppEnv>): Messages["mcp"] {
@@ -213,6 +290,7 @@ mcp.use("*", async (c, next) => {
     return rpcError(c, 403, undefined, SERVER_ERROR, t.errors.membersOff);
   }
   c.set("user", user);
+  c.set("credentialScope", user.scope);
   await next();
 });
 
@@ -311,13 +389,13 @@ function toolList(c: Context<AppEnv>) {
     name: tool.name,
     title: t.titles[tool.name],
     description: t.tools[tool.name],
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: tool.inputSchema,
     outputSchema: outputSchemas[tool.name],
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: tool.openWorld,
     },
   }));
 }
@@ -392,15 +470,8 @@ async function callTool(
   if (!tool) return rpcError(c, 200, message.id, INVALID_PARAMS, t.errors.unknownTool);
   // Since 2025-11-25, input errors are tool errors: the model reads them and can correct the call.
   const toolError = (text: string) => respond({ content: [{ type: "text", text }], isError: true });
-  const args = message.params?.arguments ?? {};
-  if (
-    typeof args !== "object" ||
-    args === null ||
-    Array.isArray(args) ||
-    Object.keys(args).length > 0
-  ) {
-    return toolError(t.errors.unexpectedArguments);
-  }
+  const prepared = tool.prepare(message.params?.arguments ?? {});
+  if ("problem" in prepared) return toolError(problemText(t, prepared.problem));
   const user = c.get("user");
   if (!user) throw new Error("the MCP route requires a user");
   const reserved = await reserveToolCall(c.env.DB, user.id);
@@ -415,7 +486,9 @@ async function callTool(
   }
   const counted = countingRows(c.env.DB);
   try {
-    const data = await tool.run({ ...c.env, DB: counted.db }, user);
+    const outcome = await prepared.run({ ...c.env, DB: counted.db }, user);
+    if ("problem" in outcome) return toolError(problemText(t, outcome.problem));
+    const { data } = outcome;
     return respond({
       content: [{ type: "text", text: JSON.stringify(data) }],
       structuredContent: data,

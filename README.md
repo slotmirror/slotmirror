@@ -229,7 +229,10 @@ pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subject
 ## MCP server
 
 slotmirror has an optional, read-only MCP server at `/mcp`. Agents can read accounts, rules, and the
-state of the last sync run. It reads no calendars and shows no event content. Set `MCP_ENABLED=1`.
+state of the last sync run. By default it reads no calendars and shows no event content. Set `MCP_ENABLED=1`.
+With `MCP_EVENTS_ENABLED=1` as well, a user can allow a token or app to call `list_events`: their
+events across all source calendars, with private events reduced to their times and slotmirror's
+own blocks left out.
 Clients such as Claude connect with your sign-in over OAuth; scripts use a personal token from
 **API tokens**. Tokens and connections last at most 90 days. See the
 [MCP documentation](https://slotmirror.com/docs/mcp/).

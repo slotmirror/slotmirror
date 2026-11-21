@@ -11,6 +11,8 @@ export function ConsentPage(props: {
   appName: string;
   returnsTo: string;
   ticket: string;
+  /** Offer a box that also lets the app read calendar events. It starts unticked. */
+  offerEvents?: boolean;
 }) {
   const { t } = useI18n();
   const name = props.appName || t.consent.unnamed;
@@ -25,13 +27,16 @@ export function ConsentPage(props: {
               <li>{line}</li>
             ))}
           </ul>
-          <p class="notice info">{t.consent.unchecked}</p>
+          <p class="notice info">
+            {props.offerEvents ? t.consent.uncheckedWithEvents : t.consent.unchecked}
+          </p>
           <p class="muted">{t.consent.returnsTo(props.returnsTo)}</p>
           {/* Served off: the script turns the buttons on once the page was seen, so that a click
               meant for another window lands on nothing. Without a script, the noscript form
               decides, and a style hides the held one. */}
           <form method="post" action="/oauth/authorize" class="consent-actions" data-hold>
             <input type="hidden" name="ticket" value={props.ticket} />
+            {props.offerEvents ? <EventsChoice /> : null}
             <button type="submit" name="decision" value="allow" class="button primary" disabled>
               {t.consent.allow}
             </button>
@@ -43,6 +48,7 @@ export function ConsentPage(props: {
             <style>{"form[data-hold] { display: none; }"}</style>
             <form method="post" action="/oauth/authorize" class="consent-actions">
               <input type="hidden" name="ticket" value={props.ticket} />
+              {props.offerEvents ? <EventsChoice /> : null}
               <button type="submit" name="decision" value="allow" class="button primary">
                 {t.consent.allow}
               </button>
@@ -54,5 +60,16 @@ export function ConsentPage(props: {
         </div>
       </section>
     </Layout>
+  );
+}
+
+/** The box that also lets the app read calendar events. Each of the two forms carries its own. */
+function EventsChoice() {
+  const { t } = useI18n();
+  return (
+    <label class="consent-events">
+      <input type="checkbox" name="events" value="1" />
+      <span>{t.consent.events}</span>
+    </label>
   );
 }

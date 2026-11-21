@@ -55,8 +55,11 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
   `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
   run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.
-- **The MCP endpoint is read-only and D1-only.** It takes the user from the bearer token, never from a
-  cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
+- **The MCP endpoint is read-only.** Its tools read D1 only, except `list_events`
+  (`src/mcp-events.ts`): it reads calendars through each account's `AccountSync` instance
+  (`readCompareEvents`), never with a token or provider call of its own, and only for a credential
+  whose user allowed events while `MCP_EVENTS_ENABLED=1`. It takes the user from the bearer token,
+  never from a cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
   or an audit `detail`. Every query has an upper bound: D1 refuses all queries of a deployment at its
   daily limit, also those of the sync. Tool calls are charged with the rows they read
   (`src/d1-rows.ts`). Tool handlers hold no SQL: each query is a function in `src/read-model.ts`,

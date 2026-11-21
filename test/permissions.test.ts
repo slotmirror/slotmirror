@@ -28,6 +28,8 @@ const EXPECTED: Record<Action, [boolean, boolean, boolean]> = {
   "apps:connect": [false, true, true],
   "mcp:read": [false, true, true],
   "mcp:write": [false, false, false],
+  // The role allows it; the credential and MCP_EVENTS_ENABLED decide too (`credentialActions`).
+  "events:read": [false, true, true],
   "users:read": [false, false, true],
   "users:manage": [false, false, true],
   "org:audit": [false, false, true],

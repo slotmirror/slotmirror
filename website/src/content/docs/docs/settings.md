@@ -41,6 +41,7 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See [Alerts](#alerts).                        |
 | `HEARTBEAT_URL`                   | secret   | Optional. Outside monitor that hears a GET once an hour. See below.                           |
 | `MCP_ENABLED`                     | variable | Optional. `1` turns on the read-only [MCP server](/docs/mcp/) and API tokens.                 |
+| `MCP_EVENTS_ENABLED`              | variable | Optional. `1` offers the MCP tool [`list_events`](/docs/mcp/#calendar-events).                |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last
 12 hours. Signing in again is one click with the provider.

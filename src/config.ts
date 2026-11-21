@@ -112,6 +112,17 @@ export function mcpEnabled(env: { MCP_ENABLED?: string } | undefined): boolean {
   return env?.MCP_ENABLED === "1";
 }
 
+/**
+ * The MCP tool `list_events` and the choice to allow it exist only with MCP_EVENTS_ENABLED=1 and
+ * MCP_ENABLED=1. Without it, no credential reads calendar events, also one that a user allowed
+ * while it was on.
+ */
+export function mcpEventsEnabled(
+  env: { MCP_ENABLED?: string; MCP_EVENTS_ENABLED?: string } | undefined,
+): boolean {
+  return mcpEnabled(env) && env?.MCP_EVENTS_ENABLED === "1";
+}
+
 export type Provider = "microsoft" | "google";
 
 /** Product names stay untranslated. */

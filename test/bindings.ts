@@ -17,6 +17,7 @@ export const TEST_BINDINGS = {
   DEV_FAKE_FETCH_URL: "https://probe-sink.example/",
   DATA_JURISDICTION: "",
   MCP_ENABLED: "1",
+  MCP_EVENTS_ENABLED: "1",
   MAX_DETAIL_TO_EXTERNAL: "title",
   MAX_DETAIL_FROM_EXTERNAL: "busy",
   SESSION_SECRET: "test-session-secret-at-least-32-characters",

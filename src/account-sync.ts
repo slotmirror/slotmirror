@@ -330,6 +330,9 @@ interface Pause {
  */
 const SOURCE_CACHE_MS = 60_000;
 
+/** Entries of the source cache at most. A cycle of rules reads far fewer windows per instance. */
+export const MAX_SOURCE_CACHE = 64;
+
 /** How long a new watch lasts. Graph allows under 7 days for events. */
 const WATCH_LIFETIME_MS = 6 * 24 * 60 * 60 * 1000;
 
@@ -1398,6 +1401,23 @@ export class AccountSync extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Drop expired entries, and the oldest ones beyond `MAX_SOURCE_CACHE`. Agent reads of
+   * `list_events` bring a new window with almost every call, and a sync start is the only other
+   * place that clears the cache.
+   */
+  private pruneSourceCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.sourceCache) {
+      if (now - entry.at >= SOURCE_CACHE_MS) this.sourceCache.delete(key);
+    }
+    // A Map iterates in insertion order, so the first keys are the oldest.
+    for (const key of this.sourceCache.keys()) {
+      if (this.sourceCache.size < MAX_SOURCE_CACHE) break;
+      this.sourceCache.delete(key);
+    }
+  }
+
   /** Source events of one calendar of this account. Called by the target account's instance. */
   async readSourceEvents(
     remoteCalendarId: string,
@@ -1412,6 +1432,7 @@ export class AccountSync extends DurableObject<Env> {
     const events = this.client(options).then((client) =>
       client.sourceEvents(remoteCalendarId, window, { withBody }),
     );
+    this.pruneSourceCache();
     this.sourceCache.set(key, { at: Date.now(), events });
     // A failed read is not cached.
     events.catch(() => this.sourceCache.delete(key));

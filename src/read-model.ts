@@ -8,7 +8,8 @@ import { hasWorkingHours } from "./sync/working-hours";
 /**
  * What the read-only API may show. Each field is named here on purpose: the tools never pass on a
  * row, `rules.options` or an audit `detail`. Tenant IDs, remote calendar IDs, category names, block
- * titles and audit texts stay out. All queries read D1 and take the user from the token.
+ * titles and audit texts stay out. All queries read D1 and take the user from the token. Only
+ * `list_events` also reads calendars, through each account's Durable Object; see `mcp-events.ts`.
  */
 
 /**
@@ -290,3 +291,123 @@ export async function readSyncStatus(
     ),
   };
 }
+
+/**
+ * Source calendars that one `list_events` call reads at most. Each costs one Durable Object call of
+ * this invocation, so this keeps far below the Free plan's 50 subrequests; the provider pages count
+ * on the budget of each account's own instance.
+ */
+export const MAX_EVENT_CALENDARS = 25;
+
+/**
+ * A calendar that `list_events` reads. `remoteId` and `tenantId` serve the read and the detail
+ * cap; they never reach an answer.
+ */
+export interface EventSource {
+  calendarId: string;
+  calendar: string;
+  remoteId: string;
+  accountId: string;
+  email: string;
+  account: string;
+  tenantId: string | null;
+  needsReconnect: boolean;
+}
+
+/**
+ * The user's source calendars, the ones the editor reads, and the time zone of the user's first
+ * account with working hours. Only calendars that the user turned on as sources are read: a
+ * calendar shared with the account, but never chosen, stays out.
+ */
+export async function readEventSources(
+  db: D1Database,
+  userId: string,
+): Promise<{ sources: EventSource[]; truncated: boolean; workTimeZone: string | null }> {
+  const { results } = await db
+    .prepare(
+      `SELECT c.id AS calendarId, c.name AS calendar, c.remote_id AS remoteId,
+              a.id AS accountId, a.email, COALESCE(a.display_name, a.email) AS account,
+              a.tenant_id AS tenantId, a.needs_reconnect AS needsReconnect,
+              a.work_hours AS workHours
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? AND c.is_source = 1
+       ORDER BY a.created_at, a.id, c.name, c.id LIMIT ?`,
+    )
+    .bind(userId, MAX_EVENT_CALENDARS + 1)
+    .all<
+      Omit<EventSource, "needsReconnect"> & { needsReconnect: number; workHours: string | null }
+    >();
+  let workTimeZone: string | null = null;
+  for (const row of results) {
+    if (workTimeZone !== null || !row.workHours) continue;
+    try {
+      const zone = (JSON.parse(row.workHours) as { workTimeZone?: unknown }).workTimeZone;
+      if (typeof zone === "string" && zone !== "") workTimeZone = zone;
+    } catch {
+      // A stored value that does not parse names no zone.
+    }
+  }
+  return {
+    truncated: results.length > MAX_EVENT_CALENDARS,
+    workTimeZone,
+    sources: results.slice(0, MAX_EVENT_CALENDARS).map((row) => ({
+      calendarId: row.calendarId,
+      calendar: row.calendar,
+      remoteId: row.remoteId,
+      accountId: row.accountId,
+      email: row.email,
+      account: row.account,
+      tenantId: row.tenantId,
+      needsReconnect: row.needsReconnect === 1,
+    })),
+  };
+}
+
+const eventView = z.strictObject({
+  accountId: z.string(),
+  /** The account's display name, or its address. */
+  account: z.string(),
+  calendar: z.string(),
+  /** Null if the event is private, or a detail cap of the deployment withholds it. */
+  title: z.nullable(z.string()),
+  location: z.nullable(z.string()),
+  /** ISO 8601 with the offset of the answer's time zone; a date (YYYY-MM-DD) for all-day events. */
+  start: z.string(),
+  /** Exclusive. For all-day events the day after the last day. */
+  end: z.string(),
+  allDay: z.boolean(),
+  showAs: z.enum(["free", "tentative", "busy", "oof", "workingElsewhere", "unknown"]),
+  private: z.boolean(),
+  declined: z.boolean(),
+  /** One occurrence of a recurring series. */
+  recurring: z.boolean(),
+  /** A block that slotmirror wrote. Listed only with `includeMirrors`. */
+  mirror: z.boolean(),
+});
+export type EventView = z.infer<typeof eventView>;
+
+const eventReadError = z.strictObject({
+  accountId: z.string(),
+  calendar: z.string(),
+  /**
+   * "reconnect": the account needs reconnecting. "throttled": the provider asked to wait. "gone":
+   * the provider no longer finds the calendar or lets the account read it. "failed": anything else.
+   */
+  code: z.enum(["reconnect", "throttled", "gone", "failed"]),
+  retryAfterSeconds: z.optional(z.number()),
+});
+export type EventReadError = z.infer<typeof eventReadError>;
+
+export const eventsAnswer = z.strictObject({
+  start: z.string(),
+  end: z.string(),
+  timeZone: z.string(),
+  events: z.array(eventView),
+  /** Calendars that could not be read. The events of the other calendars are complete. */
+  errors: z.array(eventReadError),
+  /** More events matched than one answer lists. */
+  truncated: z.boolean(),
+  /** The user has more source calendars than one call reads; the rest were not read. */
+  calendarsTruncated: z.boolean(),
+});
+export type EventsAnswer = z.infer<typeof eventsAnswer>;
