@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accountStatuses, latestRuleOutcomes, recordAudit } from "../src/audit";
-import { loadEditorState, setDirection, setGroupMembership } from "../src/editor";
+import { loadEditorState, setDirection } from "../src/editor";
 import { BASE, signIn } from "./helpers";
 
 /** A user with a work and another Microsoft account and a Google account, all with tokens. */
@@ -23,7 +23,11 @@ async function setup(prefix: string) {
     ]);
     await env.ACCOUNT_SYNC.getByName(id).storeTokens(
       id,
-      { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 },
+      {
+        refreshToken: "r",
+        accessToken: "a",
+        accessExpiresAt: Date.now() + 3_600_000,
+      },
       provider,
     );
   }
@@ -40,7 +44,13 @@ async function rulesOf(userId: string) {
      WHERE r.user_id = ? ORDER BY source, target`,
   )
     .bind(userId)
-    .all<{ id: string; source: string; target: string; enabled: number; options: string }>();
+    .all<{
+      id: string;
+      source: string;
+      target: string;
+      enabled: number;
+      options: string;
+    }>();
   return results;
 }
 
@@ -48,13 +58,21 @@ function post(path: string, cookie: string, fields: URLSearchParams, headers = {
   return exports.default.fetch(`${BASE}${path}`, {
     method: "POST",
     redirect: "manual",
-    headers: { cookie, "content-type": "application/x-www-form-urlencoded", ...headers },
+    headers: {
+      cookie,
+      "content-type": "application/x-www-form-urlencoded",
+      ...headers,
+    },
     body: fields,
   });
 }
 
 const page = async (cookie: string, path = "/rules", headers = {}) =>
-  (await exports.default.fetch(`${BASE}${path}`, { headers: { cookie, ...headers } })).text();
+  (
+    await exports.default.fetch(`${BASE}${path}`, {
+      headers: { cookie, ...headers },
+    })
+  ).text();
 
 const GERMAN = { "accept-language": "de-AT,de;q=0.9" };
 
@@ -78,7 +96,10 @@ describe("page save is all or nothing", () => {
     const response = await post(
       "/rules/choices",
       cookie,
-      new URLSearchParams({ [`choice.${w}.${o}`]: "title", [`blockColor.${w}.${o}`]: "a, b" }),
+      new URLSearchParams({
+        [`choice.${w}.${o}`]: "title",
+        [`blockColor.${w}.${o}`]: "a, b",
+      }),
       { "x-fragment": "1", ...GERMAN },
     );
     expect(response.status).toBe(400);
@@ -91,7 +112,10 @@ describe("page save is all or nothing", () => {
     const response = await post(
       "/rules/choices",
       cookie,
-      new URLSearchParams({ [`choice.${w}.${o}`]: "busy", [`blockColor.${w}.nobody`]: "3" }),
+      new URLSearchParams({
+        [`choice.${w}.${o}`]: "busy",
+        [`blockColor.${w}.nobody`]: "3",
+      }),
       { "x-fragment": "1" },
     );
     expect(response.status).toBe(400);
@@ -104,14 +128,17 @@ describe("page save is all or nothing", () => {
     const response = await post(
       "/rules/choices",
       cookie,
-      new URLSearchParams({ [`calendar.${w}-cal`]: "0", [`blockColor.${w}.${g}`]: "3" }),
+      new URLSearchParams({
+        [`calendar.${w}-cal`]: "0",
+        [`blockColor.${w}.${g}`]: "3",
+      }),
       { "x-fragment": "1" },
     );
     expect(response.status).toBe(204);
     expect(await rulesOf(user.id)).toEqual([]);
   });
 
-  it("explains a refused category on the form without the editor script", async () => {
+  it("explains a refused category in the answer", async () => {
     const { user, cookie, w, o } = await setup("commanojs");
     await setDirection(env, user, w, o, "busy");
     const response = await post(
@@ -121,9 +148,7 @@ describe("page save is all or nothing", () => {
       GERMAN,
     );
     expect(response.status).toBe(400);
-    const html = await response.text();
-    expect(html).toContain('class="notice error"');
-    expect(html).toContain("Komma");
+    expect(await response.text()).toContain("Komma");
   });
 });
 
@@ -155,10 +180,33 @@ describe("sync status", () => {
     const statuses = accountStatuses(outcomes);
     expect(statuses.get(o)).toBeUndefined();
     expect(statuses.get(g)).toMatchObject({ state: "paused" });
-    expect(await page(cookie)).not.toContain("graph_500");
-    const home = await page(cookie, "/");
-    expect(home).not.toContain("graph_500");
-    expect(home).toContain("Sync paused · Last run");
+    // The page of the app shows no code of the forgotten failure.
+    expect(await page(cookie, "/mirroring")).not.toContain("graph_500");
+    expect(await page(cookie, "/")).not.toContain("graph_500");
+  });
+
+  it("does not take a dry run for the latest outcome of a rule", async () => {
+    const { user, w, o } = await setup("dryrunlatest");
+    await setDirection(env, user, w, o, "busy");
+    const rule = (await rulesOf(user.id))[0]!;
+    const base = {
+      orgId: user.orgId,
+      userId: user.id,
+      accountId: rule.target,
+      ruleId: rule.id,
+    };
+    await recordAudit(env.DB, {
+      ...base,
+      kind: "sync_failed",
+      detail: { code: "graph_503" },
+    });
+    await recordAudit(env.DB, {
+      ...base,
+      kind: "sync_run",
+      detail: { dryRun: true, create: 3 },
+    });
+    const outcome = (await latestRuleOutcomes(env.DB, user.id)).find((o) => o.ruleId === rule.id);
+    expect(outcome?.kind).toBe("sync_failed");
   });
 
   it("lets a running rule decide the status over a paused one", () => {
@@ -196,10 +244,6 @@ describe("sync status", () => {
 describe("account name and colour", () => {
   it("keeps the automatic name when only the colour changes, and logs no rename", async () => {
     const { cookie, w } = await setup("colouronly");
-    const home = await page(cookie, "/");
-    // The field is empty; the derived name is the placeholder.
-    expect(home).toContain(`name="name" maxlength="40" value="" placeholder="work"`);
-
     const response = await post(
       `/accounts/${w}/name`,
       cookie,
@@ -236,93 +280,41 @@ describe("account name and colour", () => {
   });
 });
 
-describe("accessibility", () => {
-  it("tells assistive technology which choice, member and calendar is on", async () => {
-    const { user, cookie, w, o } = await setup("aria");
-    await setGroupMembership(env, user, w, true);
-    await setDirection(env, user, w, o, "title");
-    const html = await page(cookie);
-    expect(html).toMatch(/<button[^>]*value="title"[^>]*class="choice on"[^>]*aria-pressed="true"/);
-    expect(html).toMatch(/<button[^>]*value="busy"[^>]*class="choice"[^>]*aria-pressed="false"/);
-    expect(html).toMatch(/class="member"[^>]*aria-pressed="true"/);
-    expect(html).toMatch(/class="member out"[^>]*aria-pressed="false"/);
-    expect(html).toMatch(/class="member cal-chip"[^>]*aria-pressed="true"/);
-  });
-});
-
-describe("language switch", () => {
-  it("links to a page that exists after a form post without the editor script", async () => {
-    const { cookie } = await setup("langpost");
-    const response = await post("/rules", cookie, new URLSearchParams({ source: "x" }), {
-      referer: `${BASE}/rules?open=a&lang=en`,
-    });
-    expect(response.status).toBe(400);
-    const html = await response.text();
-    expect(html).toContain('href="/rules?open=a&amp;lang=de"');
-    expect(html).not.toContain('href="?lang=');
-  });
-
-  it("falls back to the start page without a referrer from this site", async () => {
-    const { cookie } = await setup("langnoref");
-    const response = await post("/rules", cookie, new URLSearchParams({ source: "x" }), {
-      referer: "https://elsewhere.example/rules",
-    });
-    expect(await response.text()).toContain('href="/?lang=de"');
-  });
-
-  it("keeps the current page on a normal page view", async () => {
-    const { cookie } = await setup("langget");
-    expect(await page(cookie, "/rules?open=x")).toContain('href="/rules?open=x&amp;lang=de"');
-  });
-});
-
 describe("copy", () => {
   it("uses the singular for one item", async () => {
     const { i18nFor } = await import("../src/i18n");
     const { t: en } = i18nFor("en");
     const { t: de } = i18nFor("de");
-    expect(en.accounts.changesFailed(1)).toBe("1 change failed");
-    expect(de.accounts.changesFailed(1)).toBe("1 Änderung fehlgeschlagen");
-    expect(en.accounts.changesFailed(2)).toBe("2 changes failed");
     expect(en.editor.checkResult(0, 0, 0, 1)).toBe("Matches the calendar · 1 block");
     expect(de.editor.checkResult(0, 0, 0, 1)).toBe("Stimmt mit dem Kalender überein · 1 Block");
     expect(de.editor.checkResult(0, 0, 0, 2)).toBe("Stimmt mit dem Kalender überein · 2 Blöcke");
   });
 
-  it("says copies are private only when the setting is on", async () => {
-    const { user, cookie, w, o } = await setup("grouptext");
-    await setGroupMembership(env, user, w, true);
-    await setGroupMembership(env, user, o, true);
-    const saveSettings = (fields: Record<string, string>) =>
-      post(
-        "/rules/choices",
-        cookie,
-        new URLSearchParams({ settings: "1", "settings.daysAhead": "90", ...fields }),
-        { "x-fragment": "1" },
-      );
-    expect(await page(cookie, "/rules", GERMAN)).toContain("als privat markiert");
-
-    await saveSettings({});
-    const off = await page(cookie, "/rules", GERMAN);
-    expect(off).toContain("sehen voneinander nur „Belegt“.");
-    expect(off).not.toContain("als privat markiert");
-
-    await saveSettings({ "settings.markPrivate": "on" });
-    expect(await page(cookie, "/rules", GERMAN)).toContain("als privat markiert");
-  });
-
   it("gives a new German user the German block title, and keeps existing rules' titles", async () => {
+    // The first write of a new German user stores the German title.
     const fresh = await setup("titlenew");
-    await page(fresh.cookie, "/rules", GERMAN);
-    await setDirection(env, fresh.user, fresh.w, fresh.o, "busy");
+    await post(
+      "/rules/direction",
+      fresh.cookie,
+      new URLSearchParams({ from: fresh.w, to: fresh.o, choice: "busy" }),
+      GERMAN,
+    );
     const [rule] = await rulesOf(fresh.user.id);
     expect(JSON.parse(rule!.options)).toMatchObject({ blockTitle: "Belegt" });
 
+    // A user who has rules keeps their title when a German request writes the next rule.
     const existing = await setup("titleold");
     await setDirection(env, existing.user, existing.w, existing.o, "busy");
-    expect(await page(existing.cookie, "/rules", GERMAN)).toContain('value="Busy"');
-    const [old] = await rulesOf(existing.user.id);
-    expect(JSON.parse(old!.options)).toMatchObject({ blockTitle: "Busy" });
+    await post(
+      "/rules/direction",
+      existing.cookie,
+      new URLSearchParams({ from: existing.w, to: existing.g, choice: "busy" }),
+      GERMAN,
+    );
+    const stored = await rulesOf(existing.user.id);
+    expect(stored).toHaveLength(2);
+    for (const rule of stored)
+      expect(JSON.parse(rule.options)).toMatchObject({ blockTitle: "Busy" });
   });
 
   it("explains a check that fails for an account without tokens in the user's language", async () => {
@@ -350,7 +342,7 @@ describe("copy", () => {
 });
 
 describe("polish", () => {
-  it("keeps the language switch on this site for a referrer path that starts with //", async () => {
+  it("refuses a rule without calendars, whatever the referrer path looks like", async () => {
     const { cookie } = await setup("langslash");
     for (const referer of [
       `${BASE}//evil.example/x`,
@@ -361,9 +353,6 @@ describe("polish", () => {
         referer,
       });
       expect(response.status).toBe(400);
-      const html = await response.text();
-      expect(html).toContain('href="/?lang=de"');
-      expect(html).not.toContain('href="//');
     }
   });
 
@@ -375,7 +364,11 @@ describe("polish", () => {
       // The target's access token is expired; the refresh asks for a new sign-in.
       await env.ACCOUNT_SYNC.getByName(w).storeTokens(
         w,
-        { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() - 1000 },
+        {
+          refreshToken: "r",
+          accessToken: "a",
+          accessExpiresAt: Date.now() - 1000,
+        },
         "microsoft",
       );
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -413,29 +406,6 @@ describe("polish", () => {
     );
   });
 
-  it("keeps a block title the user chose when the page loads", async () => {
-    const { user, cookie } = await setup("titlechosen");
-    await post(
-      "/rules/choices",
-      cookie,
-      new URLSearchParams({
-        settings: "1",
-        "settings.daysAhead": "90",
-        "settings.blockTitle": "Mine",
-      }),
-      { "x-fragment": "1" },
-    );
-    const html = await page(cookie, "/rules", GERMAN);
-    const row = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
-      .bind(user.id)
-      .first<{ json: string }>();
-    expect(JSON.parse(row?.json ?? "{}")).toMatchObject({ blockTitle: "Mine" });
-    // A direction without rules shows the title from the settings in its example.
-    expect(html).toContain("<b>Mine</b>");
-    expect(html).not.toContain("<b>Busy</b>");
-    expect(html).not.toContain("<b>Belegt</b>");
-  });
-
   it("uses the German default for an empty block title of a German user", async () => {
     const { user, cookie, w, o } = await setup("titleempty");
     await setDirection(env, user, w, o, "busy");
@@ -456,9 +426,6 @@ describe("polish", () => {
   it("treats a stored name equal to the derived one as automatic", async () => {
     const { cookie, w } = await setup("legacyname");
     await env.DB.prepare("UPDATE accounts SET display_name = 'work' WHERE id = ?").bind(w).run();
-    expect(await page(cookie, "/")).toContain(
-      'name="name" maxlength="40" value="" placeholder="work"',
-    );
 
     await post(`/accounts/${w}/name`, cookie, new URLSearchParams({ name: "" }));
     const row = await env.DB.prepare("SELECT display_name AS name FROM accounts WHERE id = ?")

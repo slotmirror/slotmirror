@@ -1,7 +1,8 @@
 import type { OffboardingOwner } from "./account-sync";
-import { auditStatement, errorLogFields, recordAudit } from "./audit";
+import { auditStatement, errorLogFields, recordAudit, type AuditEvent } from "./audit";
 import { HOLD_LEASE_MS, openTombstone } from "./cleanup";
 import { parseRuleOptions } from "./config";
+import { cappedLevelAuditDetail, fromAccountDetail, previousDetail } from "./editor";
 import { accountSync } from "./durable";
 import { ruleTagFor } from "./sync/plan";
 import { syncWindow } from "./sync/rules";
@@ -29,6 +30,11 @@ interface OwnedRule {
   enabled: number;
   /** 1 if a hold stopped the rule: it ran before that offboarding. */
   held: number;
+  /** Address and tenant of both accounts, for the org caps of the level in the audit log. */
+  sourceEmail: string;
+  sourceTenantId: string | null;
+  targetEmail: string;
+  targetTenantId: string | null;
 }
 
 /**
@@ -76,10 +82,14 @@ async function rulesOfAccounts(env: Env, accountIds: string[]): Promise<OwnedRul
   const { results } = await env.DB.prepare(
     `SELECT r.id AS ruleId, sc.account_id AS sourceAccountId, tc.account_id AS targetAccountId,
        tc.remote_id AS remoteCalendarId, tc.name AS calendarName, r.options AS optionsJson,
-       r.enabled, EXISTS (SELECT 1 FROM rule_holds h WHERE h.rule_id = r.id) AS held
+       r.enabled, EXISTS (SELECT 1 FROM rule_holds h WHERE h.rule_id = r.id) AS held,
+       sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+       ta.email AS targetEmail, ta.tenant_id AS targetTenantId
      FROM rules r
      JOIN calendars sc ON sc.id = r.source_calendar_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id
+     JOIN accounts ta ON ta.id = tc.account_id
      WHERE sc.account_id IN (${marks}) OR tc.account_id IN (${marks})`,
   )
     .bind(...accountIds, ...accountIds)
@@ -88,6 +98,58 @@ async function rulesOfAccounts(env: Env, accountIds: string[]): Promise<OwnedRul
 }
 
 const ids = (rules: OwnedRule[]) => JSON.stringify(rules.map((rule) => rule.ruleId));
+
+/**
+ * The level a rule had before an offboarding stopped it, with the org caps: a held rule ran
+ * before. Broken options leave the level out.
+ */
+function levelBefore(env: Env, rule: OwnedRule): ReturnType<typeof previousDetail> | null {
+  try {
+    const ran = rule.enabled === 1 || rule.held === 1;
+    const level = cappedLevelAuditDetail(
+      env,
+      parseRuleOptions(rule.optionsJson),
+      ran,
+      { email: rule.sourceEmail, tenantId: rule.sourceTenantId },
+      { email: rule.targetEmail, tenantId: rule.targetTenantId },
+    );
+    return previousDetail({ choice: level.choice, markPrivate: level.markPrivate ?? true });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `rule_deleted` rows of rules that go with a disconnected account (the row of the account
+ * deletes them by cascade). Every rule of a mirroring with that account goes, so each row is a
+ * level change to "off", like a turn off. They name the source account, the target (the row's
+ * account) and the level before, so that Activity ends the times of their mirrorings and keeps them
+ * under them. The removal of their copies is queued at this point. IDs and levels only.
+ */
+function removedRuleEvents(env: Env, owner: OffboardingOwner, rules: OwnedRule[]): AuditEvent[] {
+  // Every rule's copies get a removal (`queueRemovals`), also those of a rule that was off: a pause
+  // of the old rules page left them showing, and the rule row cannot tell such a pause from an
+  // exception whose removal ran before. So every rule writes a row. A rule that ran (a held rule
+  // ran before its hold) turns its mirroring off. One that was off already only goes: it has no
+  // "choice", so Activity ends its times without a level change.
+  return rules.map((rule) => {
+    const ran = rule.enabled === 1 || rule.held === 1;
+    return {
+      orgId: owner.orgId,
+      userId: owner.userId,
+      accountId: rule.targetAccountId,
+      ruleId: rule.ruleId,
+      kind: "rule_deleted",
+      detail: {
+        cleanup: "queued",
+        ...(ran ? { choice: "off" } : {}),
+        accountRemoved: true,
+        ...fromAccountDetail(rule.sourceAccountId),
+        ...(ran ? levelBefore(env, rule) : { previousChoice: "off" }),
+      },
+    };
+  });
+}
 
 /** What a rule wrote: a period and a title for the tombstone. Broken options must not stop this. */
 function blocksOf(rule: OwnedRule, now: number) {
@@ -287,6 +349,8 @@ export async function removeAccounts(
     await resumeRules(env, generation, accountIds, stopped);
     throw new CleanupNotQueued(failed);
   }
+  // Each rule is reported once, with the first of its accounts that goes.
+  const reported = new Set<string>();
   for (const [index, accountId] of accountIds.entries()) {
     try {
       await accountSync(env, accountId).retire(generation);
@@ -300,14 +364,29 @@ export async function removeAccounts(
       await resumeRules(env, generation, kept, stopped, new Set(cancelled ? [] : [accountId]));
       throw error;
     }
-    await recordAudit(env.DB, {
-      orgId: user.orgId,
-      userId: user.id,
-      accountId,
-      kind: "account_disconnected",
-      // The result of each rule's removal follows in its own `cleanup_finished` event.
-      detail: { rules: rules.length },
-    });
+    const gone = rules.filter(
+      (rule) =>
+        !reported.has(rule.ruleId) &&
+        (rule.sourceAccountId === accountId || rule.targetAccountId === accountId),
+    );
+    for (const rule of gone) reported.add(rule.ruleId);
+    const events: AuditEvent[] = [
+      ...removedRuleEvents(env, owner, gone),
+      {
+        orgId: user.orgId,
+        userId: user.id,
+        accountId,
+        kind: "account_disconnected",
+        // The result of each rule's removal follows in its own `cleanup_finished` event.
+        detail: { rules: rules.length },
+      },
+    ];
+    // The account is gone; like `recordAudit`, a broken log must not fail the request.
+    try {
+      await env.DB.batch(events.map((event) => auditStatement(env.DB, event)));
+    } catch (error) {
+      console.error("Audit write failed", "account_disconnected", ...errorLogFields(error));
+    }
   }
 }
 
@@ -335,6 +414,28 @@ export async function deleteUser(
   await recordAudit(env.DB, { orgId: user.orgId, kind: "user_deleted", detail: { by } });
 }
 
+/**
+ * The level that a held rule runs at again, with the org caps, and its source account, for the
+ * `rule_enabled` row of its restore. A held rule copied nothing while held, so the level before is
+ * "off". Without options (an older caller) or with broken ones, only the source account.
+ */
+function restoredLevel(env: Env, rule: HeldRule) {
+  const from = fromAccountDetail(rule.sourceAccountId);
+  if (rule.optionsJson === undefined) return from;
+  try {
+    const level = cappedLevelAuditDetail(
+      env,
+      parseRuleOptions(rule.optionsJson),
+      true,
+      { email: rule.sourceEmail ?? "", tenantId: rule.sourceTenantId ?? null },
+      { email: rule.targetEmail ?? "", tenantId: rule.targetTenantId ?? null },
+    );
+    return { ...level, previousChoice: "off" as const, ...from };
+  } catch {
+    return from;
+  }
+}
+
 /** Held rules that one cron invocation reads. */
 export const HOLD_SWEEP_RULES = 4;
 
@@ -347,6 +448,12 @@ export interface HeldRule {
   orgId: string;
   sourceAccountId: string;
   targetAccountId: string;
+  /** Options, addresses and tenants, for the level that the restored rule's audit row names. */
+  optionsJson?: string;
+  sourceEmail?: string;
+  sourceTenantId?: string | null;
+  targetEmail?: string;
+  targetTenantId?: string | null;
 }
 
 /**
@@ -362,11 +469,15 @@ export function heldRulesStatement(
   const limit = Math.max(0, Math.min(HOLD_SWEEP_RULES, Math.floor((budget - 1) / 2)));
   return env.DB.prepare(
     `SELECT r.id AS ruleId, r.user_id AS userId, u.org_id AS orgId,
-       sc.account_id AS sourceAccountId, tc.account_id AS targetAccountId
+       sc.account_id AS sourceAccountId, tc.account_id AS targetAccountId,
+       r.options AS optionsJson, sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+       ta.email AS targetEmail, ta.tenant_id AS targetTenantId
      FROM rules r
      JOIN users u ON u.id = r.user_id
      JOIN calendars sc ON sc.id = r.source_calendar_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
+     LEFT JOIN accounts sa ON sa.id = sc.account_id
+     LEFT JOIN accounts ta ON ta.id = tc.account_id
      WHERE EXISTS (SELECT 1 FROM rule_holds h WHERE h.rule_id = r.id)
        AND NOT EXISTS (SELECT 1 FROM rule_holds h WHERE h.rule_id = r.id AND h.until > ?)
      ORDER BY (SELECT MAX(h.until) FROM rule_holds h WHERE h.rule_id = r.id), r.id LIMIT ?`,
@@ -417,7 +528,7 @@ export async function releaseHeldRules(
           accountId: rule.targetAccountId,
           ruleId: rule.ruleId,
           kind: "rule_enabled",
-          detail: { restored: true },
+          detail: { restored: true, ...restoredLevel(env, rule) },
         },
         "rule_runs",
       ),

@@ -1,0 +1,306 @@
+/* Styles of the admin and API tokens pages. Tokens and shared parts: base.css.
+ *
+ * Both pages use the default content column of the shell (1120 px): lists, section heads and
+ * their buttons end at one x. Running text keeps a reading measure inside it. */
+
+:root {
+  --adm-measure: 68ch;
+}
+
+/* Page top: tabs, intro, notices ----------------------------------------------------------------- */
+
+/* The tabs sit in the page actions, like the scope switch on Activity. */
+.adm-tabs {
+  display: flex;
+}
+
+.adm-intro {
+  max-width: var(--adm-measure);
+  margin-top: 12px;
+}
+
+.adm-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.adm-notices .notice {
+  align-items: center;
+}
+
+.adm-notices + .adm-list,
+.adm-intro + .adm-list {
+  margin-top: 8px;
+}
+
+.adm-intro + .empty,
+.adm-notices + .empty {
+  margin-top: 16px;
+}
+
+/* Lists ------------------------------------------------------------------------------------------- */
+
+.adm-list {
+  margin-top: 12px;
+}
+
+.adm-notices + .adm-list {
+  margin-top: 16px;
+}
+
+/* Scoped: other pages have their own danger text (`.ov-tone.is-danger`, `.run-words.is-danger`). */
+:is(.adm, .detail) .is-danger {
+  color: var(--danger);
+}
+
+.adm-quiet {
+  max-width: var(--adm-measure);
+  margin-top: 12px;
+}
+
+.adm-apps {
+  margin-top: 24px;
+}
+
+.adm-apps-empty {
+  padding-inline: var(--gutter);
+}
+
+.adm-empty {
+  margin-top: 12px;
+}
+
+/* Tabs with sections (access, health) ------------------------------------------------------------- */
+
+/* The blocks bleed into the gutter like the list rows, so that their dividers and the rows' hairlines
+   span the same width. */
+.adm-blocks {
+  display: flex;
+  flex-direction: column;
+  margin-inline: calc(-1 * var(--gutter));
+}
+
+.adm-block {
+  padding: 20px var(--gutter);
+}
+
+.adm-block + .adm-block {
+  border-top: 1px solid var(--line);
+}
+
+.adm-block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.adm-block-head > :first-child {
+  min-width: 0;
+}
+
+.adm-block-head .btn {
+  flex: none;
+}
+
+.adm-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.adm-lead {
+  max-width: var(--adm-measure);
+  margin-top: 2px;
+}
+
+.adm-org {
+  max-width: var(--adm-measure);
+  margin-top: 12px;
+}
+
+/* The access rows use the panel's property grid. Their labels are sentences, so the label column
+   is wider than the 120 px of the panel. */
+.adm-props {
+  --label-w: 248px;
+  max-width: var(--adm-measure);
+  margin-top: 8px;
+}
+
+.adm-hint {
+  max-width: var(--adm-measure);
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.adm-block .list {
+  margin-top: 12px;
+}
+
+.adm-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.adm-block .notice {
+  margin-top: 12px;
+}
+
+/* Panel parts -------------------------------------------------------------------------------------- */
+
+.adm-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.adm-done svg {
+  flex: none;
+  color: var(--ok);
+}
+
+.adm-form .adm-done {
+  margin-top: 0;
+}
+
+.detail .section .adm-hint {
+  margin-top: 6px;
+}
+
+.adm-endpoint {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* The secret: monospace, selects with one click, wraps instead of scrolling ----------------------- */
+
+.adm-secret {
+  margin-top: 12px;
+}
+
+.adm-secret-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--control-h);
+  margin-bottom: 6px;
+}
+
+.adm-secret-label {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.adm-copy[hidden] {
+  display: none;
+}
+
+.adm-secret-value {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--fill-hover);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.adm-secret-value:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+:is(.adm, .detail) code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Narrow list: the admin rows have no icon, so the 20 px icon track of the narrow-list grid would
+   leave an empty indent. The head and its hint wrap instead of ending in an ellipsis. */
+@container list (width < 640px) {
+  .adm-list:not(.act-list) .list-row {
+    grid-template-columns: [title] minmax(0, 1fr) [count] auto [status] auto;
+  }
+
+  .adm-list .list-group-head {
+    flex-wrap: wrap;
+    height: auto;
+    padding-bottom: 4px;
+    row-gap: 0;
+  }
+
+  .adm-list .list-group-head :is(h2, h3),
+  .adm-list .list-group-hint {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .adm-list .list-group-hint {
+    flex: 1 0 100%;
+  }
+}
+
+/* Phone -------------------------------------------------------------------------------------------- */
+
+@media (max-width: 719.98px) {
+  /* The status goes under the title, so that an address is never cut for it. */
+  .adm-list .row-main {
+    flex: 1 0 100%;
+  }
+
+  .row-status {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .adm-props .prop {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-props .prop > * {
+    grid-column: 1;
+  }
+
+  /* Label over value, read as one pair: the pair gets air around it, not inside. */
+  .adm-props .prop {
+    row-gap: 0;
+    padding-block: 8px;
+  }
+
+  .adm-props .prop-label {
+    padding-block: 0;
+  }
+
+  .adm-props .prop-control {
+    min-height: 0;
+  }
+
+  .adm-block-head {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .adm-notices .notice {
+    flex-wrap: wrap;
+  }
+}

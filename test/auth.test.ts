@@ -1,6 +1,8 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { de } from "../src/i18n/de";
+import { en } from "../src/i18n/en";
 import { OAUTH_COOKIE } from "../src/oauth";
 import { identityFromIdToken } from "../src/providers/microsoft";
 import { base64url, SESSION_COOKIE } from "../src/session";
@@ -142,6 +144,37 @@ describe("Microsoft connect", () => {
       state.storage.sql.exec<{ account_id: string }>("SELECT account_id FROM tokens").one(),
     );
     expect(stored.account_id).toBe(account?.id);
+  });
+
+  it("stores the block title of the user's language when the first account connects", async () => {
+    const { user, cookie: session } = await signIn("owner@example.com");
+    // Earlier tests of this file may have stored a title for the same user.
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE users SET sync_settings = json_remove(sync_settings, '$.blockTitle') WHERE id = ?",
+      ).bind(user.id),
+      env.DB.prepare("DELETE FROM rules WHERE user_id = ?").bind(user.id),
+    ]);
+    const flow = await startFlow("/auth/microsoft/connect", session);
+    mockTokenEndpoint({
+      access_token: "access",
+      refresh_token: "refresh",
+      expires_in: 3600,
+      id_token: fakeIdToken({ tid: "t", oid: "o9", preferred_username: "titled@work.example" }),
+    });
+    const response = await exports.default.fetch(
+      `${BASE}/auth/microsoft/callback?code=abc&state=${flow.state}`,
+      {
+        headers: { cookie: `${flow.cookie}; ${session}`, "accept-language": "de" },
+        redirect: "manual",
+      },
+    );
+    expect(response.status).toBe(302);
+    expect(de.editor.defaultBlockTitle).not.toBe(en.editor.defaultBlockTitle);
+    const stored = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+      .bind(user.id)
+      .first<{ json: string }>();
+    expect(JSON.parse(stored?.json ?? "{}").blockTitle).toBe(de.editor.defaultBlockTitle);
   });
 
   it("clears needs_reconnect when the same account connects again", async () => {

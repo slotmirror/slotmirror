@@ -1,0 +1,625 @@
+/* Styles of the overview page. Only the overview page agent edits this file. Tokens: base.css. */
+
+/*
+ * Words in the warn tone use `--text-2` and in the danger tone `--danger`, as on every other page:
+ * `--warn` is a fill colour (as 12 px text on white it reaches only about 3.7:1), so the amber
+ * stays in the dot and the cell edge.
+ */
+
+/* The width comes from the Shell (`width="wide"`, `.frame.is-wide` in base.css). */
+.ov {
+  padding-top: 24px;
+}
+
+.ov > .notice {
+  margin-bottom: 24px;
+}
+
+/* Map left, a 340 px column right from 1280 px. Below, the column stacks under the map. */
+.ov-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
+  align-items: start;
+}
+
+@media (min-width: 1280px) {
+  .ov-grid:not(.is-single) {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    column-gap: 32px;
+  }
+}
+
+.ov-main {
+  min-width: 0;
+}
+
+.ov-side {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  min-width: 0;
+}
+
+/* Under the map, the side sections fill the same width as the map, two columns where they fit,
+   so the right edge is one line. */
+@media (max-width: 1279.98px) {
+  .ov-side {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+    align-items: start;
+    gap: 32px;
+  }
+}
+
+/*
+ * From 1920 px the column has no cap (base.css), and the map's cells grow to at most 320 px
+ * instead of stretching; with many calendars they keep at least 200 px and the map scrolls. The
+ * map track is the cells' width plus the 160 px row heads (`--n` cells, 6 px spacing each).
+ * Left aligned like every page, so x does not jump between pages.
+ */
+@media (min-width: 1920px) {
+  .ov-grid:not(.is-single) {
+    grid-template-columns: minmax(0, calc(160px + var(--n, 3) * 326px)) 340px;
+    justify-content: start;
+  }
+
+  .ov-grid.is-single {
+    grid-template-columns: minmax(0, calc(160px + var(--n, 3) * 326px));
+  }
+
+  .ov-matrix {
+    min-width: calc(172px + var(--n, 3) * 206px);
+  }
+}
+
+/* Header state --------------------------------------------------------------------------------- */
+
+.ov-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.ov-state-text {
+  color: var(--text-2);
+}
+
+.ov-state.is-danger .ov-state-text {
+  color: var(--danger);
+}
+
+.ov-state-time {
+  margin-left: -4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Section heads --------------------------------------------------------------------------------- */
+
+.ov-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+
+.ov-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.ov-hint {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* "All copies: Busy only, private" next to the map's title, when every copied cell shares it. */
+.ov-hint.ov-uniform {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.ov-uniform .lmark {
+  color: var(--text-2);
+}
+
+.ov-all {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+}
+
+/* Names and tones -------------------------------------------------------------------------------- */
+
+.ov-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.ov-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* The spaces around "to" are in the text, so the route reads and copies as one phrase. */
+.ov-route {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.ov-route .ov-name {
+  flex: 0 1 auto;
+}
+
+.ov-to {
+  flex: none;
+  padding-inline: 2px;
+  color: var(--text-3);
+  font-weight: 450;
+  white-space: pre;
+}
+
+.ov-tone.is-warn {
+  color: var(--text-2);
+}
+
+.ov-tone.is-danger {
+  color: var(--danger);
+}
+
+.ov-tone.is-idle,
+.ov-tone.is-ok {
+  color: var(--text);
+}
+
+.ov-muted,
+.ov-age {
+  color: var(--text-3);
+}
+
+.ov-age {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-code {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Map: rows are the source, columns the target ---------------------------------------------------- */
+
+/*
+ * The scroll box reaches 6 px past the column on both sides, and the table's 6 px spacing takes
+ * that back: the outer cell edges sit exactly on the column edges. With many calendars the box
+ * scrolls sideways; the page never does.
+ */
+.ov-map-scroll {
+  margin-inline: -6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.ov-map-scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+.ov-matrix {
+  width: 100%;
+  min-width: calc(160px + var(--n, 3) * 148px);
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 6px;
+}
+
+.ov-corner {
+  width: 160px;
+}
+
+.ov-axis {
+  padding: 0 12px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 20px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ov-axis-from {
+  vertical-align: top;
+  padding-top: 4px;
+  padding-left: 0;
+}
+
+/* Column and row heads: name, then the meta lines aligned with the name, not the swatch. */
+.ov-col,
+.ov-row {
+  min-width: 0;
+  border-radius: var(--radius-control);
+  font-weight: 450;
+  text-align: left;
+  transition: background-color var(--fast) ease-out;
+}
+
+.ov-col {
+  padding: 4px 12px 6px;
+  vertical-align: top;
+}
+
+.ov-row {
+  padding: 6px 12px 6px 0;
+  vertical-align: middle;
+}
+
+.ov-col .ov-name,
+.ov-row .ov-name {
+  display: flex;
+}
+
+.ov-axis-meta {
+  display: block;
+  overflow: hidden;
+  padding-left: 18px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-reconnect {
+  color: var(--danger);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+.ov-reconnect:hover {
+  text-decoration-color: currentColor;
+}
+
+/* The heads of the cell under the pointer or the keyboard light up: from where, into what. */
+.ov-matrix tbody tr:has(.ov-cell-link:hover, .ov-cell-link:focus-visible) > .ov-row,
+.ov-matrix:has(tbody td:nth-child(2) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(2),
+.ov-matrix:has(tbody td:nth-child(3) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(3),
+.ov-matrix:has(tbody td:nth-child(4) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(4),
+.ov-matrix:has(tbody td:nth-child(5) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(5),
+.ov-matrix:has(tbody td:nth-child(6) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(6),
+.ov-matrix:has(tbody td:nth-child(7) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(7),
+.ov-matrix:has(tbody td:nth-child(8) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(8),
+.ov-matrix:has(tbody td:nth-child(9) > .ov-cell-link:is(:hover, :focus-visible))
+  thead
+  tr:last-child
+  > th:nth-child(9) {
+  background: var(--fill-hover);
+}
+
+.ov-cell,
+.ov-self {
+  height: 64px;
+  padding: 0;
+}
+
+/* The diagonal: a calendar does not mirror into itself. A short quiet line says "nothing here on
+   purpose", so the empty cell does not read as missing data. Drawn, not typed: no dash glyph. */
+.ov-self {
+  background: none;
+}
+
+.ov-self::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 1px;
+  margin: auto;
+  background: var(--line-strong);
+}
+
+.ov-cell-link {
+  --cell-bg: var(--surface);
+  --cell-line: var(--line);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 64px;
+  height: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--cell-line);
+  border-radius: var(--radius-control);
+  background: var(--cell-bg);
+  --glyph-ring: var(--cell-bg);
+  color: var(--text);
+  transition:
+    background-color var(--fast) ease-out,
+    border-color var(--fast) ease-out;
+}
+
+.ov-cell-link:hover {
+  --cell-bg: var(--fill-hover);
+  --cell-line: var(--line-strong);
+}
+
+.ov-cell-link:focus-visible {
+  outline-offset: 1px;
+}
+
+.ov-cell-link:is(.is-failed, .is-blocked) {
+  --cell-line: color-mix(in oklab, var(--danger) 45%, var(--line));
+}
+
+.ov-cell-link.is-overdue,
+.ov-cell-link.is-partial {
+  --cell-line: color-mix(in oklab, var(--warn) 45%, var(--line));
+}
+
+.ov-cell-link:is(.is-failed, .is-blocked):hover {
+  --cell-line: color-mix(in oklab, var(--danger) 70%, var(--line));
+}
+
+.ov-cell-link:is(.is-overdue, .is-partial):hover {
+  --cell-line: color-mix(in oklab, var(--warn) 70%, var(--line));
+}
+
+/*
+ * Mixed in oklab, not oklch: `--line` is a near grey with a blue hue, and an oklch mix walks the
+ * hue from amber to blue through green (dark) or pink (light).
+ */
+
+/* "Not copied": no box, so that the mirrorings that run stand out as boxes. */
+.ov-cell-link.is-off {
+  --cell-bg: transparent;
+  --cell-line: transparent;
+  --glyph-ring: var(--surface);
+}
+
+.ov-cell-link.is-off:hover {
+  --cell-bg: var(--fill-hover);
+  --cell-line: var(--line);
+}
+
+.ov-cell-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.ov-cell-main .lmark {
+  color: var(--text-2);
+}
+
+.ov-level {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.is-off .ov-level,
+.is-off .lmark {
+  color: var(--text-3);
+}
+
+/* The second line: parts joined by a middle dot that the CSS draws. */
+.ov-cell-meta {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.ov-cell-main + .ov-cell-meta {
+  margin-top: 2px;
+}
+
+/* In a wide cell the second line starts under the label; a narrow cell needs the room. */
+.ov-cell-link {
+  container-type: inline-size;
+}
+
+@container (min-width: 200px) {
+  .ov-cell-main + .ov-cell-meta {
+    padding-left: 24px;
+  }
+}
+
+.ov-cell-meta > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ov-cell-meta > .ov-age {
+  flex: none;
+}
+
+.ov-cell-meta > * + *::before {
+  content: "\00b7";
+  margin-inline: 6px;
+  color: var(--text-3);
+}
+
+/* The phone list. It shares the markup of the other pages' lists. */
+.ov-map-list {
+  display: none;
+}
+
+.ov-map-list .list-group:first-child .list-group-head {
+  padding-top: 0;
+}
+
+.ov-map-list .row-meta {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ov-list-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ov-list-level .lmark {
+  color: var(--text-2);
+}
+
+/* Right column: needs attention, changes ------------------------------------------------------- */
+
+/* Hairlines as inset shadows, so every row is a whole number of pixels tall. */
+.ov-rows {
+  list-style: none;
+  box-shadow: inset 0 1px var(--line);
+}
+
+.ov-att,
+.ov-chg {
+  padding: 12px 0;
+  box-shadow: inset 0 -1px var(--line);
+}
+
+.ov-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.ov-subject {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-subject-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Text and actions line up with the subject, after the 8 px dot and its 8 px gap. */
+.ov-att-text,
+.ov-att-actions {
+  padding-left: 16px;
+}
+
+.ov-att-text {
+  margin-top: 2px;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.ov-att-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ov-att-actions form {
+  display: contents;
+}
+
+.ov-chg-text {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.ov-empty {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.ov-rows + .ov-empty {
+  margin-top: 8px;
+}
+
+/* Phone ------------------------------------------------------------------------------------------ */
+
+@media (max-width: 719.98px) {
+  .ov {
+    padding-top: 16px;
+  }
+
+  .ov-grid {
+    gap: 32px;
+  }
+
+  .ov-head {
+    flex-wrap: wrap;
+  }
+
+  /* The hint goes under the title instead of squeezing beside it. */
+  .ov-hint {
+    order: 3;
+    flex: 1 0 100%;
+  }
+
+  .ov-map-scroll {
+    display: none;
+  }
+
+  .ov-map-list {
+    display: block;
+  }
+
+  .ov-map-list .ov-cell-meta {
+    padding-left: 0;
+  }
+}

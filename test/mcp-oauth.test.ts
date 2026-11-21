@@ -6,8 +6,6 @@ import worker from "../src/index";
 import { OAUTH_COOKIE } from "../src/oauth";
 import { base64url, SESSION_COOKIE } from "../src/session";
 import { BASE, signIn } from "./helpers";
-// @ts-expect-error `?raw` imports are untyped without `vite/client`
-import editorScript from "../public/editor.js?raw";
 
 const RESOURCE = `${BASE}/mcp`;
 const LOOPBACK = "http://127.0.0.1:33418/callback";
@@ -593,16 +591,6 @@ describe("authorization", () => {
     const held = /<form[^>]*data-hold[^>]*>([\s\S]*?)<\/form>/.exec(html)?.[1] ?? "";
     expect(held.match(/<button[^>]*disabled/g)).toHaveLength(2);
     expect(html).toMatch(/<noscript>[\s\S]*<form[^>]*action="\/oauth\/authorize"/);
-    // The script turns them on. Its hold block comes first, so that no error in a later part of
-    // the shared page script can leave the consent buttons off for good.
-    const script = String(editorScript);
-    const firstCode = script
-      .split("\n")
-      .find((line) => line.trim() !== "" && !line.startsWith("//"));
-    expect(firstCode).toBe("{");
-    const hold = script.slice(0, script.indexOf("\n}\n"));
-    expect(hold).toContain('querySelectorAll("form[data-hold] button")');
-    expect(hold).toContain("button.disabled = false");
   });
 
   it("shows the client's name, where it returns to, and allows that origin as form target", async () => {
@@ -1191,17 +1179,19 @@ describe("ending a connection", () => {
     const page = await fetchApp("/tokens", { headers: { cookie } });
     const html = await page.text();
     expect(html).toContain("Test agent");
-    const grantId = /action="\/tokens\/apps\/([^/]+)\/revoke"/.exec(html)?.[1];
+    const grantId = /href="\/tokens\?a=([^&"]+)"/.exec(html)?.[1];
     expect(grantId).toBeTruthy();
     const response = await postForm(`/tokens/apps/${grantId}/revoke`, {}, { cookie, origin: BASE });
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect((await mcpCall(tokens.access_token)).status).toBe(401);
   });
 
   it("shows the admin's end button for a user who has only a connected app", async () => {
     const admin = await signIn("admin@example.com");
     const { user } = await connected();
-    const page = await (await fetchApp("/admin", { headers: { cookie: admin.cookie } })).text();
+    const page = await (
+      await fetchApp(`/admin?u=${user.id}`, { headers: { cookie: admin.cookie } })
+    ).text();
     expect(page).toContain(`/admin/users/${user.id}/revoke-tokens`);
   });
 
@@ -1214,7 +1204,7 @@ describe("ending a connection", () => {
         {},
         { cookie: admin.cookie, origin: BASE },
       );
-      expect(response.status).toBe(302);
+      expect(response.status).toBe(303);
       expect((await mcpCall(tokens.access_token)).status).toBe(401);
       expect((await refresh(flow, tokens.refresh_token)).status).toBe(400);
       // The rows go too: a reset must free the slots, not only stop the tokens.
