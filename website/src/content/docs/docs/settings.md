@@ -137,15 +137,15 @@ down or its trigger is gone, no alert arrives. Use an outside uptime check for t
 
 Each user sets these on the **Rules** page, under **For all calendars**. They apply to every direction.
 
-| Setting                               | Effect                                                                                   |
-| ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Time window                           | How many days ahead the sync looks.                                                      |
-| Title of busy blocks                  | The title of copies at the level "As busy".                                              |
-| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.   |
-| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.            |
-| Mark copies as private                | People who can see your calendar see "Private" instead of the title. You see everything. |
-| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.               |
-| Skip Google events with these colours | Google event colours to leave out.                                                       |
+| Setting                               | Effect                                                                                                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Time window                           | How many days ahead the sync looks.                                                                                                                                          |
+| Title of busy blocks                  | The title of copies at the level "As busy".                                                                                                                                  |
+| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.                                                                                       |
+| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.                                                                                                |
+| Mark copies as private                | People who can see your calendar see "Private" instead of the title. You see everything. Turning it on marks every direction. Turning it off applies only to new directions. |
+| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.                                                                                                   |
+| Skip Google events with these colours | Google event colours to leave out.                                                                                                                                           |
 
 Events marked private in the source never carry more than "Busy".
 
