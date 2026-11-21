@@ -178,3 +178,21 @@ export function countingEnv(beforeBatch?: (sql: string[]) => Promise<void>) {
   });
   return { counts, env: { ...env, DB, ACCOUNT_SYNC } as Env };
 }
+
+/**
+ * The page without the app shell's command palette and shortcut sheet. Both dialogs sit on every
+ * app page and print mirroring names, level summaries, links and a reload form, so a test about
+ * the page's own content must not look into them. Fails if a dialog has no closing tag, because
+ * then the cut would swallow the page.
+ */
+export function withoutShellDialogs(html: string): string {
+  let out = html;
+  for (const id of ["palette", "shortcuts"]) {
+    const start = out.indexOf(`<dialog id="${id}"`);
+    if (start < 0) continue;
+    const end = out.indexOf("</dialog>", start);
+    if (end < 0) throw new Error(`dialog ${id} is not closed`);
+    out = out.slice(0, start) + out.slice(end + "</dialog>".length);
+  }
+  return out;
+}

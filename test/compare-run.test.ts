@@ -6,7 +6,7 @@ import { ALERT_REPEAT_MS, type CompareAlert } from "../src/alerts";
 import { COMPARE_LIMIT, latestCompares } from "../src/audit";
 import { de } from "../src/i18n/de";
 import { en } from "../src/i18n/en";
-import { describeCompare } from "../src/pages/activity";
+import { describeCompareDetail } from "../src/pages/next/describe";
 import { FakeCalendar } from "../src/providers/fake-calendar";
 import { GoogleCalendar } from "../src/providers/google-calendar";
 import { GraphCalendar } from "../src/providers/graph-calendar";
@@ -1587,21 +1587,20 @@ describe("/admin", () => {
         ).bind(user.id, targetId),
       ),
     );
-    const html = await (await admin("/admin", cookie)).text();
-    expect(html).toContain(`data-compare="${targetId}-main:full"`);
-    expect(html).toContain(en.activity.compareClean(1));
+    const html = await (await admin("/admin?tab=health", cookie)).text();
+    expect(html).toContain(en.next.describe.activity.detail.compareClean(1));
   });
 
   it("shows the last result of each mode", async () => {
-    const { target, targetId } = await setup("admin-modes");
+    const { target } = await setup("admin-modes");
     await target.startCompares("full");
     await alarms(target);
     await target.startCompares("near");
     await alarms(target);
     const { cookie } = await signIn("admin@example.com");
-    const html = await (await admin("/admin", cookie)).text();
-    expect(html).toContain(`data-compare="${targetId}-main:full"`);
-    expect(html).toContain(`data-compare="${targetId}-main:near"`);
+    const html = await (await admin("/admin?tab=health", cookie)).text();
+    expect(html).toContain(en.next.admin.compareModes.full);
+    expect(html).toContain(en.next.admin.compareModes.near);
   });
 
   it("names the reason of a failure", async () => {
@@ -1611,9 +1610,8 @@ describe("/admin", () => {
       state.storage.put("removalQueue", [{ ruleId, remoteCalendarId: CALENDAR, attempts: 0 }]),
     );
     await target.startCompares("full");
-    const html = await (await admin("/admin", cookie)).text();
-    expect(html).toContain("admin-failed-b@example.com");
-    expect(html).toContain(en.activity.compareReasons.removal_queue);
+    const html = await (await admin("/admin?tab=health", cookie)).text();
+    expect(html).toContain(en.next.describe.activity.detail.compareReasons.removal_queue);
   });
 
   it("starts comparisons for an admin only, and shows what it started", async () => {
@@ -1626,21 +1624,25 @@ describe("/admin", () => {
     expect(await stateOf(target, calendarId)).toBeUndefined();
 
     const response = await admin("/admin/compare", cookie, "POST");
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "/admin?compare=requested&started=1&open=0&failed=0",
+      "/admin?tab=health&compare=requested&started=1&open=0&failed=0",
     );
     expect(await stateOf(target, calendarId)).toMatchObject({ mode: "full" });
   });
 
   it("shows what a start did", async () => {
     const { cookie } = await signIn("admin@example.com");
-    const path = "/admin?compare=requested&started=1&open=2&failed=3";
-    expect(await (await admin(path, cookie)).text()).toContain(en.admin.compareCounts(1, 2, 3));
-    const none = await (await admin("/admin?compare=requested&started=x", cookie)).text();
-    expect(none).toContain(en.admin.compareCounts(0, 0, 0));
-    const plain = await (await admin("/admin", cookie)).text();
-    expect(plain).not.toContain(en.admin.compareCounts(0, 0, 0));
+    const path = "/admin?tab=health&compare=requested&started=1&open=2&failed=3";
+    expect(await (await admin(path, cookie)).text()).toContain(
+      en.next.admin.compareCounts(1, 2, 3),
+    );
+    const none = await (
+      await admin("/admin?tab=health&compare=requested&started=x", cookie)
+    ).text();
+    expect(none).toContain(en.next.admin.compareCounts(0, 0, 0));
+    const plain = await (await admin("/admin?tab=health", cookie)).text();
+    expect(plain).not.toContain(en.next.admin.compareCounts(0, 0, 0));
   });
 
   it("counts open comparisons, refused calendars and accounts that fail", async () => {
@@ -1661,7 +1663,7 @@ describe("/admin", () => {
     const response = await admin("/admin/compare", cookie, "POST");
     await env.DB.prepare("UPDATE rules SET options = '{}' WHERE id = ?").bind(broken.ruleId).run();
     expect(response.headers.get("location")).toBe(
-      "/admin?compare=requested&started=0&open=1&failed=2",
+      "/admin?tab=health&compare=requested&started=0&open=1&failed=2",
     );
   });
 
@@ -1695,9 +1697,9 @@ describe("/admin", () => {
 
   it("names the excluded days, in every language", async () => {
     const { cookie } = await signIn("admin@example.com");
-    const html = await (await admin("/admin", cookie)).text();
-    expect(html).toContain(en.admin.compareHorizon);
-    expect(de.admin.compareHorizon).not.toBe(en.admin.compareHorizon);
+    const html = await (await admin("/admin?tab=health", cookie)).text();
+    expect(html).toContain(en.next.admin.compareHorizon);
+    expect(de.next.admin.compareHorizon).not.toBe(en.next.admin.compareHorizon);
   });
 
   it("shows no result of another org", async () => {
@@ -1709,14 +1711,14 @@ describe("/admin", () => {
     )
       .bind(JSON.stringify({ calendarId: "other-org-cal", mode: "full", expected: 1 }))
       .run();
-    const html = await (await admin("/admin", cookie)).text();
+    const html = await (await admin("/admin?tab=health", cookie)).text();
     expect(html).not.toContain("other-org-cal");
   });
 });
 
 describe("the text of a result", () => {
   function text(detail: object, t = en): string {
-    return describeCompare(
+    return describeCompareDetail(
       {
         id: 1,
         kind: "compare_run",
@@ -1729,28 +1731,36 @@ describe("the text of a result", () => {
   }
 
   it("is clean only for a clean result", () => {
-    expect(text({ mode: "full", clean: true, expected: 3 })).toBe(en.activity.compareClean(3));
+    expect(text({ mode: "full", clean: true, expected: 3 })).toBe(
+      en.next.describe.activity.detail.compareClean(3),
+    );
   });
 
   it("is not clean with an unconfirmed hit", () => {
     const line = text({ mode: "full", expected: 3, unconfirmed: 1, cleared: 1 });
-    expect(line).not.toContain(en.activity.compareClean(3));
-    expect(line).toContain(en.activity.compareUnconfirmed(1));
+    expect(line).not.toContain(en.next.describe.activity.detail.compareClean(3));
+    expect(line).toContain(en.next.describe.activity.detail.compareUnconfirmed(1));
   });
 
   it("is not clean with a full list", () => {
     const line = text({ mode: "full", expected: 3, hitsCapped: true });
-    expect(line).not.toContain(en.activity.compareClean(3));
-    expect(line).toContain(en.activity.compareCapped);
+    expect(line).not.toContain(en.next.describe.activity.detail.compareClean(3));
+    expect(line).toContain(en.next.describe.activity.detail.compareCapped);
   });
 
   it("names a run without any block", () => {
-    expect(text({ mode: "full", expected: 0 })).toBe(en.activity.compareNothing);
-    expect(text({ mode: "full", expected: 0 }, de)).toBe(de.activity.compareNothing);
+    expect(text({ mode: "full", expected: 0 })).toBe(
+      en.next.describe.activity.detail.compareNothing,
+    );
+    expect(text({ mode: "full", expected: 0 }, de)).toBe(
+      de.next.describe.activity.detail.compareNothing,
+    );
   });
 
   it("names a calendar without a rule and without a block", () => {
-    expect(text({ mode: "leftover", expected: 0 })).toBe(en.activity.compareNoLeftovers);
+    expect(text({ mode: "leftover", expected: 0 })).toBe(
+      en.next.describe.activity.detail.compareNoLeftovers,
+    );
   });
 
   it("names what a run repaired", () => {
@@ -1761,7 +1771,12 @@ describe("the text of a result", () => {
       cleared: 2,
       clearedHits: "missing:a,duplicate:b",
     });
-    expect(line).toContain(en.activity.compareCleared(2, en.activity.compareFound(1, 0, 0, 1)));
+    expect(line).toContain(
+      en.next.describe.activity.detail.compareCleared(
+        2,
+        en.next.describe.activity.detail.compareFound(1, 0, 0, 1),
+      ),
+    );
   });
 });
 

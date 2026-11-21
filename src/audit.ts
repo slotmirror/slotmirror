@@ -1,3 +1,4 @@
+import { runQueries, single, type Query } from "./batch";
 import { closeAbandonedTombstones } from "./cleanup";
 import { GoogleApiError } from "./providers/google-calendar";
 import { GraphError } from "./providers/graph-calendar";
@@ -397,8 +398,23 @@ export interface ActivityRow {
   createdAt: string;
   /** Set on the org-wide view only. */
   email: string | null;
-  /** The connected account, on the view of its own user only. Admins do not get this address. */
+  /**
+   * The connected account, on the rows of the user who reads them only, also in the org view.
+   * Admins do not get the address of another person's calendar.
+   */
   accountEmail?: string | null;
+  /** The rule of the row, on the rows of the user who reads them only, also in the org view. */
+  ruleId?: string | null;
+  /**
+   * The ID of the row's connected account, on the rows of the user who reads them only. It names
+   * the calendar of a mirroring also after its account was disconnected and its row is gone.
+   */
+  accountId?: string | null;
+  /**
+   * A row outside the page that the list does not show: a later change of a rule of the page,
+   * which can end a time in which others saw more (see `activityPage`). Only the viewer's rows.
+   */
+  context?: boolean;
 }
 
 /** The latest events of one user. */
@@ -410,7 +426,7 @@ export async function userActivity(
   const { results } = await db
     .prepare(
       `SELECT e.id, e.kind, e.detail, e.created_at AS createdAt, NULL AS email,
-              a.email AS accountEmail
+              a.email AS accountEmail, e.rule_id AS ruleId, e.account_id AS accountId
        FROM audit_events e LEFT JOIN accounts a ON a.id = e.account_id
        WHERE e.user_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT ?`,
     )
@@ -434,6 +450,285 @@ export async function orgActivity(
     .bind(orgId, limit)
     .all<ActivityRow>();
   return results;
+}
+
+/** Rows per page of the activity page. */
+export const ACTIVITY_PAGE_SIZE = 50;
+
+/** Rows that one filtered activity query reads at most, whatever the filter matches. */
+export const ACTIVITY_SCAN_ROWS = 1000;
+
+/** The type filter of the activity page. */
+export const ACTIVITY_GROUPS = ["sync", "changes", "problems"] as const;
+export type ActivityGroup = (typeof ACTIVITY_GROUPS)[number];
+
+/** Events that a user changed on purpose: mirrorings, settings and calendars. */
+const CHANGE_KINDS: readonly AuditKind[] = [
+  "rule_created",
+  "rule_deleted",
+  "rule_enabled",
+  "rule_paused",
+  "rule_updated",
+  "group_changed",
+  "settings_changed",
+  "account_renamed",
+  "account_connected",
+  "account_disconnected",
+];
+
+/** Changes of one rule: their rows name the rule, and since the field exists its source account. */
+const RULE_KINDS: readonly AuditKind[] = [
+  "rule_created",
+  "rule_deleted",
+  "rule_enabled",
+  "rule_paused",
+  "rule_updated",
+];
+
+/** Runs that did not finish, checks that failed, and calendars that need a reconnect. */
+const PROBLEM_KINDS: readonly AuditKind[] = [
+  "sync_failed",
+  "sync_run_aborted",
+  "token_refresh_failed",
+  "account_paused",
+  "account_disconnect_failed",
+  "compare_failed",
+];
+
+/** Conditions on the rows of the inner query, which the activity query names `s`. */
+const GROUP_SQL: Record<ActivityGroup, string> = {
+  sync: "s.kind IN ('sync_run', 'sync_failed', 'sync_run_aborted')",
+  changes: `s.kind IN (${CHANGE_KINDS.map((kind) => `'${kind}'`).join(", ")})`,
+  // A partial run is a finished run with failed changes.
+  problems: `(s.kind IN (${PROBLEM_KINDS.map((kind) => `'${kind}'`).join(", ")})
+    OR (s.kind = 'sync_run' AND COALESCE(json_extract(s.detail, '$.failed'), 0) > 0))`,
+};
+
+/** The type filter value in a URL, or undefined if it is absent or unknown. */
+export function parseActivityGroup(value: string | undefined): ActivityGroup | undefined {
+  return ACTIVITY_GROUPS.find((group) => group === value);
+}
+
+export interface ActivityFilter {
+  group?: ActivityGroup;
+  /** Rows of these rules only. An empty list matches no row. */
+  ruleIds?: readonly string[];
+  /** Rows of this connected account, in addition to those of `ruleIds` if both are given. */
+  accountId?: string;
+  /**
+   * Also the changes of rules from `from`, into `to`, or both, also of rules that are gone: a
+   * save that turned a mirroring off deleted them, so `ruleIds` cannot name them. Every `rule_*`
+   * row holds the source as `fromAccount` and the target as its account (`src/editor.ts`). Rows
+   * from before that field match through `ruleIds` and `accountId` only.
+   */
+  turnedOff?: { from?: string; to?: string };
+  /** Rows older than the row with this ID in the order `created_at DESC, id DESC`. */
+  before?: number;
+}
+
+export interface ActivityPage {
+  rows: ActivityRow[];
+  /** The `before` value of the next older page; null if nothing older matches in the scan. */
+  older: number | null;
+}
+
+/**
+ * Whose rows a page reads. The org view names the calendar and the rule only on the rows of
+ * `viewerId`: those are the viewer's own, which the editor state can name. Other people's
+ * addresses and rules stay out of the result.
+ */
+type ActivityScope = { userId: string } | { orgId: string; viewerId?: string };
+
+/**
+ * The SQL of the main query of `activityPage` and its bound values, in the order of the `?`.
+ * Exported for the query-plan test. A list of rule IDs is one bound value (a JSON array read by
+ * `json_each`), because D1 allows 100 bound parameters per query and a user can have more rules.
+ */
+export function activityPageQuery(
+  scope: ActivityScope,
+  filter: ActivityFilter,
+  limit: number,
+): { sql: string; binds: (string | number)[]; filtered: boolean; scanRows: number } {
+  const ofUser = "userId" in scope;
+  const column = ofUser ? "user_id" : "org_id";
+  const id = ofUser ? scope.userId : scope.orgId;
+  const conditions: string[] = [];
+  const binds: (string | number)[] = [];
+  if (filter.group) conditions.push(GROUP_SQL[filter.group]);
+  const ends: string[] = [];
+  if (filter.ruleIds && (filter.accountId === undefined || filter.ruleIds.length > 0)) {
+    if (filter.ruleIds.length > 0) {
+      ends.push("s.rule_id IN (SELECT value FROM json_each(?))");
+      binds.push(JSON.stringify(filter.ruleIds));
+    } else {
+      ends.push("0");
+    }
+  }
+  if (filter.accountId !== undefined) {
+    ends.push("s.account_id = ?");
+    binds.push(filter.accountId);
+  }
+  if (filter.turnedOff && (filter.turnedOff.from || filter.turnedOff.to)) {
+    const off = [
+      `s.kind IN (${RULE_KINDS.map((kind) => `'${kind}'`).join(", ")})`,
+      "json_extract(s.detail, '$.fromAccount') IS NOT NULL",
+    ];
+    if (filter.turnedOff.from) {
+      off.push("json_extract(s.detail, '$.fromAccount') = ?");
+      binds.push(filter.turnedOff.from);
+    }
+    if (filter.turnedOff.to) {
+      off.push("s.account_id = ?");
+      binds.push(filter.turnedOff.to);
+    }
+    ends.push(`(${off.join(" AND ")})`);
+  }
+  if (ends.length > 0) conditions.push(`(${ends.join(" OR ")})`);
+  const filtered = conditions.length > 0;
+  const scanRows = filtered ? ACTIVITY_SCAN_ROWS : limit + 1;
+  const cursor =
+    filter.before === undefined
+      ? ""
+      : `AND (created_at, id) < (SELECT created_at, id FROM audit_events WHERE id = ? AND ${column} = ?)`;
+  const cursorBinds = filter.before === undefined ? [] : [filter.before, id];
+  const viewer = "viewerId" in scope ? scope.viewerId : undefined;
+  const join = ofUser
+    ? "LEFT JOIN accounts a ON a.id = s.account_id"
+    : viewer === undefined
+      ? "LEFT JOIN users u ON u.id = s.user_id"
+      : "LEFT JOIN users u ON u.id = s.user_id LEFT JOIN accounts a ON a.id = s.account_id";
+  const select = ofUser
+    ? "NULL AS email, a.email AS accountEmail, s.rule_id AS ruleId, s.account_id AS accountId"
+    : viewer === undefined
+      ? "u.email AS email"
+      : `u.email AS email, CASE WHEN s.user_id = ? THEN a.email END AS accountEmail,
+         CASE WHEN s.user_id = ? THEN s.rule_id END AS ruleId,
+         CASE WHEN s.user_id = ? THEN s.account_id END AS accountId`;
+  const selectBinds = !ofUser && viewer !== undefined ? [viewer, viewer, viewer] : [];
+  const sql = `SELECT s.id, s.kind, s.detail, s.created_at AS createdAt, ${select}
+       FROM (
+         SELECT id, kind, detail, created_at, rule_id, account_id, user_id FROM audit_events
+         WHERE ${column} = ? ${cursor}
+         ORDER BY created_at DESC, id DESC LIMIT ?
+       ) s ${join}
+       ${filtered ? `WHERE ${conditions.join(" AND ")}` : ""}
+       ORDER BY s.created_at DESC, s.id DESC LIMIT ?`;
+  return {
+    sql,
+    binds: [...selectBinds, id, ...cursorBinds, scanRows, ...binds, limit + 1],
+    filtered,
+    scanRows,
+  };
+}
+
+/**
+ * One page of activity, newest first. The inner query reads rows through `audit_events_user_created`
+ * or `audit_events_org_created` in the order of the page, from the cursor on, and stops at
+ * `ACTIVITY_SCAN_ROWS` (the page size plus one without a filter). The filters apply to these rows
+ * only, because `kind`, `rule_id` and `account_id` have no index of their own: a rare match must
+ * not read the whole retention period. If the scan ends before the page is full, `older` points at
+ * the last row read, so the next page continues there.
+ */
+async function activityPage(
+  db: D1Database,
+  scope: ActivityScope,
+  filter: ActivityFilter,
+  limit: number,
+): Promise<ActivityPage> {
+  const ofUser = "userId" in scope;
+  const column = ofUser ? "user_id" : "org_id";
+  const id = ofUser ? scope.userId : scope.orgId;
+  const { sql, binds, filtered } = activityPageQuery(scope, filter, limit);
+  const cursor =
+    filter.before === undefined
+      ? ""
+      : `AND (created_at, id) < (SELECT created_at, id FROM audit_events WHERE id = ? AND ${column} = ?)`;
+  const cursorBinds = filter.before === undefined ? [] : [filter.before, id];
+  const { results } = await db
+    .prepare(sql)
+    .bind(...binds)
+    .all<ActivityRow>();
+  const rows = results.slice(0, limit);
+  const later = await laterRuleRows(db, scope, filter, rows);
+  const page = (older: number | null) => ({ rows: [...later, ...rows], older });
+  if (results.length > limit) return page(rows.at(-1)?.id ?? null);
+  if (!filtered) return page(null);
+  // Fewer matches than a page. If the scan was cut short, older rows may still match.
+  const edge = await db
+    .prepare(
+      `SELECT id FROM audit_events WHERE ${column} = ? ${cursor}
+       ORDER BY created_at DESC, id DESC LIMIT 2 OFFSET ?`,
+    )
+    .bind(id, ...cursorBinds, ACTIVITY_SCAN_ROWS - 1)
+    .all<{ id: number }>();
+  const [last, beyond] = edge.results;
+  return page(last && beyond ? last.id : null);
+}
+
+/**
+ * On an older page, the changes of the page's rules that came after its newest row, as context
+ * rows: a turn off on a newer page ends a time in which others saw more that started here. Only
+ * the viewer's own rows (the org view names no other person's rules). The read walks
+ * `audit_events_user_created` forward from the page and stops at `ACTIVITY_SCAN_ROWS`; a page
+ * without a change of a rule reads nothing.
+ */
+async function laterRuleRows(
+  db: D1Database,
+  scope: ActivityScope,
+  filter: ActivityFilter,
+  rows: ActivityRow[],
+): Promise<ActivityRow[]> {
+  const viewer = "userId" in scope ? scope.userId : scope.viewerId;
+  const newest = rows[0];
+  if (filter.before === undefined || viewer === undefined || !newest) return [];
+  const ruleIds = [
+    ...new Set(
+      rows.flatMap((row) => (RULE_KINDS.includes(row.kind) && row.ruleId ? [row.ruleId] : [])),
+    ),
+  ];
+  if (ruleIds.length === 0) return [];
+  const { results } = await db
+    .prepare(
+      `SELECT s.id, s.kind, s.detail, s.created_at AS createdAt, NULL AS email,
+              a.email AS accountEmail, s.rule_id AS ruleId, s.account_id AS accountId
+       FROM (
+         SELECT id, kind, detail, created_at, rule_id, account_id FROM audit_events
+         WHERE user_id = ?1 AND (created_at, id) > (?2, ?3)
+         ORDER BY created_at ASC, id ASC LIMIT ?4
+       ) s LEFT JOIN accounts a ON a.id = s.account_id
+       WHERE s.kind IN (${RULE_KINDS.map((kind) => `'${kind}'`).join(", ")})
+         AND s.rule_id IN (SELECT value FROM json_each(?5))
+       ORDER BY s.created_at DESC, s.id DESC`,
+    )
+    .bind(viewer, newest.createdAt, newest.id, ACTIVITY_SCAN_ROWS, JSON.stringify(ruleIds))
+    .all<ActivityRow>();
+  return results.map((row) => ({ ...row, context: true }));
+}
+
+/** One page of the events of one user, with the filters and the cursor of the activity page. */
+export function userActivityPage(
+  db: D1Database,
+  userId: string,
+  filter: ActivityFilter = {},
+  limit = ACTIVITY_PAGE_SIZE,
+): Promise<ActivityPage> {
+  return activityPage(db, { userId }, filter, limit);
+}
+
+/**
+ * One page of the events of an org. With `viewerId`, the rows of that user carry their calendar
+ * address and rule, so that the page can name the viewer's own mirrorings; the mirroring and
+ * calendar filters then match the viewer's own rules and calendars.
+ */
+export function orgActivityPage(
+  db: D1Database,
+  orgId: string,
+  filter: ActivityFilter = {},
+  limit = ACTIVITY_PAGE_SIZE,
+  viewerId?: string,
+): Promise<ActivityPage> {
+  const scoped = viewerId === undefined ? { group: filter.group, before: filter.before } : filter;
+  return activityPage(db, viewerId === undefined ? { orgId } : { orgId, viewerId }, scoped, limit);
 }
 
 /** Calendars per mode that the admin page shows the last comparison of. */
@@ -487,24 +782,8 @@ export interface RuleOutcome {
  * purges it. Outcomes of paused rules carry `enabled: false`.
  */
 export async function latestRuleOutcomes(db: D1Database, userId: string): Promise<RuleOutcome[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT e.rule_id AS ruleId, e.account_id AS accountId, e.kind, e.created_at AS createdAt,
-              e.detail, r.enabled
-       FROM audit_events e JOIN rules r ON r.id = e.rule_id AND r.user_id = ?
-       WHERE e.id IN (
-         SELECT MAX(id) FROM audit_events
-         WHERE user_id = ? AND rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
-           AND COALESCE(json_extract(detail, '$.dryRun'), 0) = 0
-         GROUP BY rule_id)`,
-    )
-    .bind(userId, userId)
-    .all<Omit<RuleOutcome, "detail" | "enabled"> & { detail: string; enabled: number }>();
-  return results.map((row) => ({
-    ...row,
-    enabled: row.enabled === 1,
-    detail: parseDetail(row.detail),
-  }));
+  const [outcomes] = await runQueries(db, [ruleOutcomesQuery(db, userId)]);
+  return outcomes;
 }
 
 export function parseDetail(json: string): RuleOutcome["detail"] {
@@ -605,4 +884,128 @@ export function statusOf(
   if (failed > 0) return { state: "error", at, failed };
   if ((outcome.detail.remaining ?? 0) > 0) return { state: "partial", at };
   return { state: "ok", at };
+}
+
+/** Audit rows that the overview's "changes in the last 24 hours" reads at most. */
+export const RECENT_CHANGES_SCAN_ROWS = 500;
+
+/** The window of the overview's changes list. */
+export const RECENT_CHANGES_WINDOW_MS = 24 * 60 * 60_000;
+
+/** What the overview shows of the last 24 hours, and how much of the window the read covered. */
+export interface RecentChanges {
+  /** Runs that created, updated, removed or failed something, and changes the user made. */
+  rows: ActivityRow[];
+  /** Rows read. If it equals the scan limit, rows older than `oldest` were not read. */
+  scanned: number;
+  /** Time of the oldest row read; null if the window holds no row. */
+  oldest: string | null;
+  /** The scan limit of the read. */
+  limit: number;
+  /** Start of the window: rows from this time on were asked for. */
+  since: string;
+}
+
+/**
+ * The changes of one user in the `RECENT_CHANGES_WINDOW_MS` before `now`, newest first: finished runs (not dry runs) that created,
+ * updated, removed or failed at least one block, and the changes a user makes on purpose (see
+ * `CHANGE_KINDS`). Runs without a change are left out; every rule writes one each hour.
+ *
+ * The scan reads at most `RECENT_CHANGES_SCAN_ROWS` rows through `audit_events_user_created`,
+ * in one statement. The one-row `m` keeps the counts of the scan even when no row matches, so that
+ * the page can tell "nothing changed" from "not everything was read".
+ */
+export async function recentChanges(
+  db: D1Database,
+  userId: string,
+  now: number,
+  limit = RECENT_CHANGES_SCAN_ROWS,
+): Promise<RecentChanges> {
+  const [changes] = await runQueries(db, [recentChangesQuery(db, userId, now, limit)]);
+  return changes;
+}
+
+// Queries for the one-batch page loads (see `src/batch.ts`). They hold the statements of the reads
+// of the same name above, which run them alone, so that a page can run them in one batch.
+
+/** `latestRuleOutcomes` as a query for a batch; the function runs this query alone. */
+export function ruleOutcomesQuery(db: D1Database, userId: string): Query<RuleOutcome[]> {
+  const statement = db
+    .prepare(
+      `SELECT e.rule_id AS ruleId, e.account_id AS accountId, e.kind, e.created_at AS createdAt,
+              e.detail, r.enabled
+       FROM audit_events e JOIN rules r ON r.id = e.rule_id AND r.user_id = ?
+       WHERE e.id IN (
+         SELECT MAX(id) FROM audit_events
+         WHERE user_id = ? AND rule_id IS NOT NULL AND kind IN ('sync_run', 'sync_failed')
+           AND COALESCE(json_extract(detail, '$.dryRun'), 0) = 0
+         GROUP BY rule_id)`,
+    )
+    .bind(userId, userId);
+  return single(statement, (result) =>
+    (
+      result.results as (Omit<RuleOutcome, "detail" | "enabled"> & {
+        detail: string;
+        enabled: number;
+      })[]
+    ).map((row) => ({ ...row, enabled: row.enabled === 1, detail: parseDetail(row.detail) })),
+  );
+}
+
+/** `recentChanges` as a query for a batch; the function runs this query alone. */
+export function recentChangesQuery(
+  db: D1Database,
+  userId: string,
+  now: number,
+  limit = RECENT_CHANGES_SCAN_ROWS,
+): Query<RecentChanges> {
+  const since = new Date(now - RECENT_CHANGES_WINDOW_MS).toISOString();
+  const changeKinds = CHANGE_KINDS.map((kind) => `'${kind}'`).join(", ");
+  const statement = db
+    .prepare(
+      `WITH s AS (
+         SELECT id, kind, detail, created_at, rule_id, account_id FROM audit_events
+         WHERE user_id = ?1 AND created_at >= ?2
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?3
+       ),
+       m AS (SELECT COUNT(*) AS scanned, MIN(created_at) AS oldest FROM s)
+       SELECT m.scanned, m.oldest, x.id, x.kind, x.detail, x.createdAt, x.accountEmail, x.ruleId,
+              x.accountId
+       FROM m LEFT JOIN (
+         SELECT s.id, s.kind, s.detail, s.created_at AS createdAt, a.email AS accountEmail,
+                s.rule_id AS ruleId, s.account_id AS accountId
+         FROM s LEFT JOIN accounts a ON a.id = s.account_id
+         WHERE s.kind IN (${changeKinds})
+            OR (s.kind = 'sync_run'
+                AND COALESCE(json_extract(s.detail, '$.dryRun'), 0) = 0
+                AND COALESCE(json_extract(s.detail, '$.create'), 0)
+                  + COALESCE(json_extract(s.detail, '$.update'), 0)
+                  + COALESCE(json_extract(s.detail, '$.delete'), 0)
+                  + COALESCE(json_extract(s.detail, '$.failed'), 0) > 0)
+       ) x ON 1
+       ORDER BY x.createdAt DESC, x.id DESC`,
+    )
+    .bind(userId, since, limit);
+  return single(statement, (result) => {
+    const results = result.results as ({ scanned: number; oldest: string | null } & {
+      [K in keyof ActivityRow]: ActivityRow[K] | null;
+    })[];
+    const first = results[0];
+    const rows: ActivityRow[] = [];
+    for (const row of results) {
+      if (row.id === null || row.kind === null || row.createdAt === null) continue;
+      rows.push({
+        id: row.id,
+        kind: row.kind,
+        detail: row.detail ?? "{}",
+        createdAt: row.createdAt,
+        email: null,
+        accountEmail: row.accountEmail ?? null,
+        accountId: row.accountId ?? null,
+        ruleId: row.ruleId ?? null,
+      });
+    }
+    return { rows, scanned: first?.scanned ?? 0, oldest: first?.oldest ?? null, limit, since };
+  });
 }

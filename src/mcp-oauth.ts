@@ -22,7 +22,8 @@ export const DAILY_CLIENT_REGISTRATIONS = 1000;
 export const REGISTRATIONS_PER_ADDRESS = 30;
 
 const REFRESH_DAYS = 30;
-const GRANT_DAYS = 90;
+/** The longest life of a grant. The consent page names it. */
+export const GRANT_DAYS = 90;
 const CODE_SECONDS = 300;
 const CONSENT_SECONDS = 600;
 const MAX_REDIRECT_URIS = 5;

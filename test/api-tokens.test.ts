@@ -310,7 +310,7 @@ describe("token page", () => {
       `${BASE}/tokens/${row?.id}/revoke`,
       form({}, cookie),
     );
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
   });
 
@@ -325,7 +325,7 @@ describe("admin", () => {
   it("shows the number of tokens and lets an admin end them", async () => {
     const { token, user } = await newToken();
     const admin = await signIn("admin@example.com");
-    const page = await exports.default.fetch(`${BASE}/admin`, {
+    const page = await exports.default.fetch(`${BASE}/admin?u=${user.id}`, {
       headers: { cookie: admin.cookie },
     });
     expect(await page.text()).toContain(`/admin/users/${user.id}/revoke-tokens`);
@@ -333,7 +333,7 @@ describe("admin", () => {
       `${BASE}/admin/users/${user.id}/revoke-tokens`,
       form({}, admin.cookie),
     );
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
     const audit = await env.DB.prepare(
       "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",

@@ -21,6 +21,41 @@ pnpm dev
 | `pnpm check`      | All of the above                                                             |
 | `pnpm cf-typegen` | Generate `worker-configuration.d.ts` again after changes to `wrangler.jsonc` |
 
+## Sign in without a provider
+
+For local work on the pages, `DEV_SIGN_IN_AS` in `.dev.vars` signs every request in as an existing
+user with this email, without Microsoft or Google:
+
+```sh
+DEV_SIGN_IN_AS=you@example.com
+DEV_FAKE_CALENDARS=1
+```
+
+The user must exist in the local database. The bypass works only if all of these hold:
+
+- `DEV_FAKE_CALENDARS` is `1`. This marks a development or load-test instance. Never set it on a
+  deployment that serves real users.
+- `PUBLIC_URL` is unset or names a local host. A tunnel address turns the bypass off.
+- The request goes to `localhost`, `127.0.0.1` or `[::1]`, and its `Host` header names the same
+  host.
+- The request carries no proxy header: `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Real-IP` or `True-Client-IP`.
+- `CF-Connecting-IP`, if present, is a loopback address. This only stops a proxy that sets this
+  header. `wrangler dev` keeps a value that the client sends, so it does not identify the client.
+
+These checks catch a configuration mistake. They do not stop a client that reaches the server:
+the code cannot see who connects, and under `wrangler dev` a client that sends the
+`MF-Original-URL` header chooses the URL and the `Host` header that slotmirror sees. Anyone who
+reaches the server signs in as this user:
+
+- If the server listens on another address than loopback, for example `wrangler dev --ip 0.0.0.0`,
+  everyone on the network signs in.
+- A proxy or a port forward that sends a local `Host` and no proxy header signs every visitor in.
+  For example, nginx with `proxy_pass http://127.0.0.1:8787` sends `Host: 127.0.0.1` and no
+  forwarded headers. The same applies to `ssh -R`, `socat` and `kubectl port-forward`.
+
+So set `DEV_SIGN_IN_AS` only on a server that listens on loopback, with nothing in front of it.
+
 ## Load tests with simulated calendars
 
 This variable replaces Graph and Google with simulated calendars inside the Durable Objects:

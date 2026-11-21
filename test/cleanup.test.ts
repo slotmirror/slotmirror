@@ -624,7 +624,13 @@ describe("cleanup", () => {
     )
       .bind(ruleId)
       .first<{ detail: string }>();
-    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({ cleanup: "queued" });
+    // With the source account and the level the rule had, so Activity keeps it under its mirroring.
+    expect(JSON.parse(audit?.detail ?? "{}")).toEqual({
+      cleanup: "queued",
+      fromAccount: "fail-a",
+      previousChoice: "busy",
+      previousMarkPrivate: true,
+    });
 
     const stub = env.ACCOUNT_SYNC.getByName(b);
     await runDurableObjectAlarm(stub);

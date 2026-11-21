@@ -1,11 +1,11 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "./app-env";
 import { i18nFromContext } from "./i18n";
-import { MessagePage } from "./pages/message";
+import { MessagePage } from "./pages/next/public";
 import { render } from "./render";
 
 /**
- * The pages load one script and one stylesheet from this origin. Inline `style` attributes carry
+ * The pages load scripts, stylesheets and fonts from this origin only. Inline `style` attributes carry
  * account colours, so styles allow them; scripts allow no inline code. No page may be framed.
  */
 export const CONTENT_SECURITY_POLICY = [
@@ -13,6 +13,8 @@ export const CONTENT_SECURITY_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  "font-src 'self'",
+  "manifest-src 'self'",
   "connect-src 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -35,6 +37,14 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.header("X-Frame-Options", "DENY");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "same-origin");
+  // App pages hold the user's data: no shared cache, and a revalidation on every load. A route
+  // that sets its own value, such as `no-store` on the token pages, keeps it.
+  if (
+    c.res.headers.get("Content-Type")?.startsWith("text/html") &&
+    !c.res.headers.has("Cache-Control")
+  ) {
+    c.header("Cache-Control", "private, no-cache");
+  }
 };
 
 /**

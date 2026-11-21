@@ -69,15 +69,6 @@ const post = (cookie: string, path: string, fields: Record<string, string>, frag
     body: new URLSearchParams(fields),
   });
 
-/** The buffer row of a source card. */
-async function bufferRow(cookie: string, from: string) {
-  const html = await (
-    await exports.default.fetch(`${BASE}/rules?open=${from}`, { headers: { cookie } })
-  ).text();
-  const card = html.split(`id="src-${from}"`)[1]?.split("</details>\n")[0] ?? "";
-  return card.match(/<form[^>]*source-buffer[\s\S]*?<\/form>/)?.[0] ?? "";
-}
-
 const BUFFER = { bufferBefore: 30, bufferAfter: 15 };
 
 beforeEach(() => {
@@ -95,9 +86,8 @@ afterEach(() => {
 });
 
 describe("source options stored on the source account", () => {
-  it("keeps the buffer of a source without rules, and shows it", async () => {
+  it("keeps the buffer of a source without rules", async () => {
     const { user, cookie, w, g } = await setup("srcnone");
-    expect(await bufferRow(cookie, w)).toContain("No buffer");
     const saved = await post(
       cookie,
       "/rules/choices",
@@ -106,7 +96,6 @@ describe("source options stored on the source account", () => {
     );
     expect(saved.status).toBe(204);
     expect(await sourceOptionsOf(user.id, w)).toEqual(BUFFER);
-    expect(await bufferRow(cookie, w)).toContain("30 min. before, 15 min. after");
 
     await setDirection(env, user, w, g, "title");
     expect(await buffersFrom(user.id, w)).toEqual({ [g]: "30,15" });
@@ -191,19 +180,5 @@ describe("source options stored on the source account", () => {
     expect(await buffersFrom(user.id, w)).toEqual({ [g]: "30,15" });
     await setDirection(env, user, w, g, "title");
     expect(await buffersFrom(user.id, w)).toEqual({ [g]: "30,15" });
-  });
-
-  it('shows "differs" when a rule differs from the stored buffer', async () => {
-    const { user, cookie, w, g, o } = await setup("srcmixed");
-    await setDirection(env, user, w, g, "busy");
-    await setDirection(env, user, w, o, "busy");
-    await setRuleDetails(env, user, { sources: [{ from: w, options: BUFFER }] });
-    expect(await bufferRow(cookie, w)).toContain("30 min. before, 15 min. after");
-    await env.DB.prepare(
-      "UPDATE rules SET options = json_set(options, '$.bufferBefore', 10) WHERE target_calendar_id = ?",
-    )
-      .bind(`${g}-cal`)
-      .run();
-    expect(await bufferRow(cookie, w)).toContain(">differs<");
   });
 });

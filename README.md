@@ -122,6 +122,21 @@ above. The code of the waitlist Worker is in
 
 ![A source card with several calendars of one account](docs/images/source-calendars.png)
 
+## UI changed
+
+This release replaces the interface. The Overview is the start page, and Mirroring, Calendars,
+Activity, API tokens and Admin are pages of their own, with a command palette (`Ctrl+K` or
+`Cmd+K`) and a panel for details. The screenshots above still show the previous
+interface.
+
+- The pages have short addresses: `/` (Overview), `/mirroring`, `/calendars`, `/activity`,
+  `/tokens` and `/admin`. The preview addresses below `/next` answer with a permanent redirect to
+  the same page for one release. Update bookmarks.
+- `/rules` redirects to `/mirroring`.
+- Nothing else moves. The sign-in, the OAuth flow, the MCP endpoint, the webhooks and the form
+  endpoints keep their addresses. Old form endpoints below `/next` keep working for one release.
+- There is no database migration. To go back, deploy the previous release again.
+
 ## Settings
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars

@@ -6,6 +6,7 @@ import {
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AUDIT_RETENTION_DAYS } from "../src/audit";
+import { en } from "../src/i18n/en";
 import worker from "../src/index";
 import { SESSION_COOKIE, signSession } from "../src/session";
 import { addAccount, BASE, signIn } from "./helpers";
@@ -19,6 +20,24 @@ describe("worker", () => {
     const response = await exports.default.fetch(`${BASE}/healthz`);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+  });
+
+  it("answers an unknown address with a styled page for a browser and plain text for the rest", async () => {
+    const page = await exports.default.fetch(`${BASE}/nothing-here`, {
+      headers: { accept: "text/html" },
+    });
+    expect(page.status).toBe(404);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toContain("Page not found");
+    for (const init of <RequestInit[]>[
+      {},
+      { headers: { accept: "application/json" } },
+      { method: "POST", headers: { accept: "text/html", origin: BASE } },
+    ]) {
+      const response = await exports.default.fetch(`${BASE}/nothing-here`, init);
+      expect(response.status, JSON.stringify(init)).toBe(404);
+      expect(await response.text(), JSON.stringify(init)).toBe("Not found");
+    }
   });
 
   it("echoes the Graph validation token as plain text", async () => {
@@ -47,7 +66,10 @@ describe("worker", () => {
     expect(response.status).toBe(503);
     const html = await response.text();
     expect(html).toContain("Finish the setup");
-    expect(html).toContain("ALLOWED_EMAILS, ALLOWED_DOMAINS or ADMIN_EMAILS");
+    // The checklist names each variable of the access step in a field of its own.
+    for (const name of ["ALLOWED_EMAILS", "ALLOWED_DOMAINS", "ADMIN_EMAILS"]) {
+      expect(html).toContain(`value="${name}"`);
+    }
     expect(html).not.toContain("Sign in with Microsoft 365");
 
     // The routes that do not need a finished setup keep working without the settings.
@@ -201,7 +223,7 @@ describe("users", () => {
     await addAccount(other.user.id, "acc-other", "other-calendar@elsewhere.org");
 
     const html = await (
-      await exports.default.fetch(`${BASE}/`, { headers: { cookie: owner.cookie } })
+      await exports.default.fetch(`${BASE}/calendars`, { headers: { cookie: owner.cookie } })
     ).text();
     expect(html).toContain("owner-calendar@example.com");
     expect(html).not.toContain("other-calendar@elsewhere.org");
@@ -259,21 +281,14 @@ describe("admin page", () => {
       (await exports.default.fetch(`${BASE}/admin`, { headers: { cookie: admin.cookie } })).text();
 
     const before = await page();
-    expect(before).not.toContain("needs reconnecting");
-    expect(before).not.toContain("need reconnecting");
-    expect(before).not.toContain("badge error");
+    expect(before).not.toContain(en.next.admin.reconnectSummary(1));
 
     await env.DB.prepare(
       "UPDATE accounts SET needs_reconnect = 1 WHERE id = 'acc-admin-broken'",
     ).run();
     const html = await page();
-    expect(html).toContain("1 user has an account that needs reconnecting.");
-    const row = html.slice(html.indexOf('<td data-label="Email">owner@example.com</td>'));
-    expect(row.slice(0, row.indexOf("</tr>"))).toContain(
-      '<span class="badge error">1 needs reconnecting</span>',
-    );
-    const adminRow = html.slice(html.indexOf('<td data-label="Email">admin@example.com</td>'));
-    expect(adminRow.slice(0, adminRow.indexOf("</tr>"))).not.toContain("badge error");
+    expect(html).toContain(en.next.admin.reconnectSummary(1));
+    expect(html).toContain(en.next.admin.needsReconnect(1));
     expect(html).not.toContain("broken@example.com");
   });
 });
@@ -307,21 +322,14 @@ describe("account actions", () => {
     const { user, cookie } = await signIn("owner@example.com");
     await addAccount(user.id, "acc-ask", "ask-me@example.com");
 
-    const home = await (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
-    expect(home).toContain('href="/accounts/acc-ask/disconnect"');
-    // The link sits in its own section of the settings, and the settings are no popup.
-    expect(home).toMatch(
-      /<section class="account-danger"[^>]*>\s*<h3[^>]*>Disconnect account<\/h3>/,
-    );
-
     const response = await exports.default.fetch(`${BASE}/accounts/acc-ask/disconnect`, {
       headers: { cookie },
     });
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain("Disconnect this account?");
+    expect(html).toContain("Disconnect this calendar?");
     expect(html).toContain("ask-me@example.com");
-    expect(html).toContain("No rule uses this account.");
+    expect(html).toContain("No mirroring uses this calendar.");
     expect(html).toMatch(/<form[^>]*method="post"[^>]*action="\/accounts\/acc-ask\/disconnect"/);
     // Showing the page changes nothing.
     expect(

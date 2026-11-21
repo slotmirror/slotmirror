@@ -157,6 +157,35 @@ describe("group rules", () => {
     expect(await rulesOf(user.id)).toEqual([groupBusy(o, w), groupBusy(w, o)]);
   });
 
+  it("get the block title of the user's language when a calendar load creates the first ones", async () => {
+    const { user, ids } = await setup("gr-title", ["w", "o"], { withoutCalendars: ["w"] });
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    const titleOf = async () =>
+      (
+        JSON.parse(
+          (
+            await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+              .bind(user.id)
+              .first<{ json: string }>()
+          )?.json ?? "{}",
+        ) as { blockTitle?: string }
+      ).blockTitle;
+    expect(await titleOf()).toBeUndefined();
+
+    await refreshUserCalendars(env, user.id, "Beschäftigt");
+    expect((await rulesOf(user.id)).length).toBe(2);
+    expect(await titleOf()).toBe("Beschäftigt");
+    const stored = await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?")
+      .bind(user.id)
+      .all<{ options: string }>();
+    for (const row of stored.results) {
+      expect((JSON.parse(row.options) as { blockTitle: string }).blockTitle).toBe("Beschäftigt");
+    }
+    // A later load in another language does not rename anything.
+    await refreshUserCalendars(env, user.id, "Busy again");
+    expect(await titleOf()).toBe("Beschäftigt");
+  });
+
   it("are created when a read-only target becomes writable, and keep the exceptions", async () => {
     const { user, ids } = await setup("gr-ro", ["w", "o", "g"]);
     const [w, o, g] = ids as [string, string, string];

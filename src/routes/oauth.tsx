@@ -28,8 +28,7 @@ import {
   signResume,
   verifyConsentTicket,
 } from "../mcp-oauth";
-import { ConsentPage } from "../pages/consent";
-import { MessagePage } from "../pages/message";
+import { ConsentPage, MessagePage } from "../pages/next/public";
 import { render } from "../render";
 
 const MAX_FORM_BYTES = 8 * 1024;
