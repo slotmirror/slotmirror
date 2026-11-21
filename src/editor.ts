@@ -415,8 +415,12 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
  * removal of the blocks beyond it, which no run reads any more. The all-day switch applies only if
  * the user changed it from the one the form showed; then every rule follows. Otherwise each rule
- * keeps its own value, because a rule that turns to skipping loses its all-day blocks. Throws
- * `EditorConflict` if a rule changed since the read; then nothing is stored.
+ * keeps its own value, because a rule that turns to skipping loses its all-day blocks. The
+ * private switch is asymmetric, because a rule can carry its own mark and the form sends no sign
+ * that the user meant to apply the switch to all rules: "on" marks every rule private, which can
+ * only narrow; "off" sets only the default for new rules, and every rule keeps its mark. So a
+ * settings save never makes a copy more visible. Throws `EditorConflict` if a rule changed since
+ * the read; then nothing is stored.
  */
 export async function setSettings(
   env: Env,
@@ -478,6 +482,7 @@ export async function setSettings(
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
       skipAllDay: skipAllDayChanged ? settings.skipAllDay : previous.skipAllDay,
+      markPrivate: settings.markPrivate || previous.markPrivate,
     });
     // A parked exception stays parked. A rule that changed since the read fails the batch.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
