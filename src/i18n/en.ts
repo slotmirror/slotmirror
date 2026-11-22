@@ -323,7 +323,8 @@ export const en = {
     skipTentativeTitle: "Skip tentative events",
     skipTentativeHint: "“Maybe” answers and tentative events do not block.",
     markPrivateTitle: "Mark copies as private",
-    markPrivateHint: "Others see “Private” instead of the title. You see everything.",
+    markPrivateHint:
+      "Others see “Private” instead of the title. You see everything. Turning it off applies only to new directions.",
     days: (days: number) => `${days} days`,
     cellChanged: "changed",
     checking: "Checking…",

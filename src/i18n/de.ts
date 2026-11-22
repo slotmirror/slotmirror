@@ -325,7 +325,8 @@ export const de: Messages = {
     skipTentativeTitle: "Termine mit Vorbehalt auslassen",
     skipTentativeHint: "„Vielleicht“-Antworten und vorläufige Termine blocken nicht.",
     markPrivateTitle: "Kopien als privat markieren",
-    markPrivateHint: "Andere sehen „Privat“ statt des Titels. Du siehst alles.",
+    markPrivateHint:
+      "Andere sehen „Privat“ statt des Titels. Du siehst alles. Ausschalten gilt nur für neue Richtungen.",
     days: (days: number) => `${days} Tage`,
     cellChanged: "geändert",
     checking: "Wird geprüft …",
