@@ -180,11 +180,13 @@ async function startFlow(
 
 auth.post("/logout", async (c) => {
   const user = c.get("user");
+  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
+  // the next sign-in. Only a path of the authorization endpoint passes. The body is read first: a
+  // malformed one throws, and an error response would drop the header that clears the cookie, so
+  // that the user stays signed in. A body that cannot be read counts as no resume value.
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
-  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
-  // the next sign-in. Only a path of the authorization endpoint passes.
-  const form = await c.req.parseBody();
   return c.redirect(resumePath(form.resume) ?? "/");
 });
 
