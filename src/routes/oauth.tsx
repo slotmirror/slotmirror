@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import type { AppEnv } from "../app-env";
-import { mcpEnabled, setupStatus } from "../config";
+import { mcpEnabled, mcpEventsEnabled, setupStatus } from "../config";
 import { i18nFromContext } from "../i18n";
 import {
   addressKey,
@@ -11,10 +11,12 @@ import {
   authorizationServerMetadata,
   checkAuthorizeRequest,
   clientRedirect,
+  EVENTS_GRANT_SCOPE,
   exchangeCode,
   findClient,
   issueCode,
   MAX_GRANTS_PER_USER,
+  OAUTH_SCOPE,
   oauthIssuer,
   otherGrantCount,
   protectedResourceMetadata,
@@ -30,7 +32,9 @@ import {
 } from "../mcp-oauth";
 import { ConsentPage } from "../pages/consent";
 import { MessagePage } from "../pages/message";
+import { can } from "../permissions";
 import { render } from "../render";
+import type { SignedInUser } from "../users";
 
 const MAX_FORM_BYTES = 8 * 1024;
 
@@ -153,6 +157,11 @@ oauthPages.use("/authorize", async (c, next) => {
   await next();
 });
 
+/** Whether the consent page offers to let the app read calendar events. */
+function offersEvents(c: Context<AppEnv>, user: SignedInUser): boolean {
+  return mcpEventsEnabled(c.env) && can(user, "events:read");
+}
+
 function problem(c: Context<AppEnv>, status: 400 | 409, message: string) {
   const { t } = i18nFromContext(c);
   return render(
@@ -206,6 +215,7 @@ oauthPages.get("/authorize", async (c) => {
       appName={request.client.name}
       returnsTo={new URL(request.redirectUri).host}
       ticket={await signConsentTicket(c.env, user.id, request)}
+      offerEvents={offersEvents(c, user)}
     />,
   );
 });
@@ -229,6 +239,9 @@ oauthPages.post("/authorize", async (c) => {
       clientRedirect(ticket.redirect, issuer, { error: "access_denied", state: ticket.state }),
     );
   }
-  const code = await issueCode(c.env.DB, user, ticket);
+  // Events only on the user's own choice, never because the client asked for the scope: the box
+  // starts unticked, and the deployment must offer it now, not only when the page was shown.
+  const events = form.events === "1" && offersEvents(c, user);
+  const code = await issueCode(c.env.DB, user, ticket, events ? EVENTS_GRANT_SCOPE : OAUTH_SCOPE);
   return c.redirect(clientRedirect(ticket.redirect, issuer, { code, state: ticket.state }));
 });

@@ -250,7 +250,7 @@ function offsetsOfWeek(zone: string, week: number): WeekOffsets {
 }
 
 /** The offset of a zone at an instant, in milliseconds. UTC and unknown zones have none. */
-function offsetAt(zone: string, instant: number): number {
+export function offsetAt(zone: string, instant: number): number {
   if (zone === "UTC") return 0;
   const offsets = offsetsOfWeek(zone, Math.floor(instant / WEEK_MS));
   return instant < offsets.change ? offsets.before : offsets.after;
@@ -263,7 +263,7 @@ function offsetAt(zone: string, instant: number): number {
  * forward by the change, so 02:30 on the day of a one-hour change is 03:30. Minute 1440 is the
  * start of the next day.
  */
-function localInstant(zone: string, day: number, minutes: number): number {
+export function localInstant(zone: string, day: number, minutes: number): number {
   const local = day + minutes * MINUTE_MS;
   const offsetBefore = offsetAt(zone, local - DAY_MS);
   const offsetAfter = offsetAt(zone, local + DAY_MS);
@@ -275,7 +275,7 @@ function localInstant(zone: string, day: number, minutes: number): number {
 }
 
 /** The date (as UTC midnight) of an instant in a zone. */
-function localDate(zone: string, instant: number): number {
+export function localDate(zone: string, instant: number): number {
   // Offsets stay within a day, so the date is the UTC date or one next to it.
   const utcDay = Math.floor(instant / DAY_MS) * DAY_MS;
   for (const day of [utcDay + DAY_MS, utcDay]) {

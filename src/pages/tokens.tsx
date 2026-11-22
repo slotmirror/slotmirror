@@ -17,6 +17,8 @@ export function TokensPage(props: {
   endpoint: string;
   /** False while the org has MCP off for members: the list stays, the form goes. */
   canCreate: boolean;
+  /** Offer a box that lets a new token read calendar events. It starts unticked. */
+  offerEvents?: boolean;
   created?: string;
   problem?: string;
 }) {
@@ -28,7 +30,7 @@ export function TokensPage(props: {
         <div class="section-head">
           <div>
             <h1>{t.tokens.title}</h1>
-            <p class="lead">{t.tokens.lead}</p>
+            <p class="lead">{props.offerEvents ? t.tokens.leadWithEvents : t.tokens.lead}</p>
           </div>
         </div>
         {props.problem ? <p class="notice error">{props.problem}</p> : null}
@@ -60,6 +62,12 @@ export function TokensPage(props: {
                   ))}
                 </select>
               </label>
+              {props.offerEvents ? (
+                <label class="token-events">
+                  <input type="checkbox" name="events" value="1" />
+                  <span>{t.tokens.events}</span>
+                </label>
+              ) : null}
               <button type="submit" class="button primary">
                 {t.tokens.create}
               </button>
@@ -96,7 +104,12 @@ export function TokensPage(props: {
               <tbody>
                 {props.tokens.map((token) => (
                   <tr>
-                    <td data-label={t.tokens.name}>{token.name}</td>
+                    <td data-label={t.tokens.name}>
+                      {token.name}
+                      {token.events ? (
+                        <span class="badge scope">{t.tokens.readsEvents}</span>
+                      ) : null}
+                    </td>
                     <td data-label={t.tokens.ends}>
                       <code>{`…${token.lastFour}`}</code>
                     </td>
@@ -146,7 +159,10 @@ export function TokensPage(props: {
               <tbody>
                 {props.apps.map((app) => (
                   <tr>
-                    <td data-label={t.tokens.app}>{app.name || t.consent.unnamed}</td>
+                    <td data-label={t.tokens.app}>
+                      {app.name || t.consent.unnamed}
+                      {app.events ? <span class="badge scope">{t.tokens.readsEvents}</span> : null}
+                    </td>
                     <td data-label={t.tokens.connected}>{formatTimestamp(app.createdAt)}</td>
                     <td class="muted" data-label={t.tokens.refreshed}>
                       {app.refreshedAt ? formatTimestamp(app.refreshedAt) : t.tokens.never}

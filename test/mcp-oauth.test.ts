@@ -200,7 +200,7 @@ describe("discovery", () => {
       expect(await response.json()).toMatchObject({
         resource,
         authorization_servers: [BASE],
-        scopes_supported: ["mcp:read"],
+        scopes_supported: ["mcp:read", "mcp:events"],
         bearer_methods_supported: ["header"],
       });
     }
@@ -244,7 +244,7 @@ describe("discovery", () => {
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
-      scopes_supported: ["mcp:read"],
+      scopes_supported: ["mcp:read", "mcp:events"],
       authorization_response_iss_parameter_supported: true,
     });
   });
@@ -1280,5 +1280,107 @@ describe("ending a connection", () => {
     const stranger = await postForm("/oauth/revoke", { token: "x", client_id: "smc_nobody" });
     expect(stranger.status).toBe(401);
     expect(stranger.headers.get("www-authenticate")).toContain("Basic");
+  });
+});
+
+describe("event access", () => {
+  /** Allow a flow on the consent page with the given form fields, and exchange the code. */
+  async function allow(fields: Record<string, string>, overrides?: Partial<Env>) {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { ticket } = await consent(cookie, flow);
+    if (!ticket) throw new Error("no ticket");
+    const init = {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie,
+        origin: BASE,
+      },
+      body: new URLSearchParams({ ticket, decision: "allow", ...fields }).toString(),
+    };
+    const decided = overrides
+      ? await fetchWith(overrides, "/oauth/authorize", init)
+      : await fetchApp("/oauth/authorize", init);
+    expect(decided.status).toBe(302);
+    const code = new URL(decided.headers.get("location") ?? "").searchParams.get("code");
+    if (!code) throw new Error("no code");
+    const response = await exchange(flow, code);
+    expect(response.status).toBe(200);
+    return { cookie, flow, tokens: (await response.json()) as Tokens };
+  }
+
+  async function toolsOf(accessToken: string): Promise<string[]> {
+    const body = (await (await mcpCall(accessToken)).json()) as {
+      result?: { tools?: { name: string }[] };
+    };
+    return (body.result?.tools ?? []).map((tool) => tool.name);
+  }
+
+  it("offers an unticked box on the consent page, only while the deployment offers events", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    // Two boxes, one per form (with and without script), neither ticked.
+    expect(html.match(/type="checkbox" name="events" value="1"/g)?.length).toBe(2);
+    expect(html).not.toMatch(/name="events"[^>]*checked/);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    const off = await fetchWith({ MCP_EVENTS_ENABLED: "" }, `/oauth/authorize?${query}`, {
+      headers: { cookie },
+    });
+    expect(off.status).toBe(200);
+    expect(await off.text()).not.toContain('name="events"');
+  });
+
+  it("grants events only if the user ticks the box, and keeps the scope through a refresh", async () => {
+    const plain = await allow({});
+    expect(plain.tokens.scope).toBe("mcp:read");
+    expect(await toolsOf(plain.tokens.access_token)).not.toContain("list_events");
+
+    const events = await allow({ events: "1" });
+    expect(events.tokens.scope).toBe("mcp:read mcp:events");
+    expect(await toolsOf(events.tokens.access_token)).toContain("list_events");
+    const renewed = await refresh(events.flow, events.tokens.refresh_token);
+    const next = (await renewed.json()) as Tokens;
+    expect(next.scope).toBe("mcp:read mcp:events");
+    expect(await toolsOf(next.access_token)).toContain("list_events");
+    const page = await fetchApp("/tokens", { headers: { cookie: events.cookie } });
+    expect(await page.text()).toContain("Reads events");
+  });
+
+  it("ignores a ticked box while the deployment does not offer events", async () => {
+    const { tokens } = await allow({ events: "1" }, { MCP_EVENTS_ENABLED: "" });
+    expect(tokens.scope).toBe("mcp:read");
+    expect(await toolsOf(tokens.access_token)).not.toContain("list_events");
+  });
+
+  it("ignores the scope a client asks for: only the box grants events", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { ticket } = await consent(cookie, flow, { scope: "mcp:read mcp:events" });
+    if (!ticket) throw new Error("no ticket");
+    const decided = await postForm(
+      "/oauth/authorize",
+      { ticket, decision: "allow" },
+      { cookie, origin: BASE },
+    );
+    const code = new URL(decided.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const tokens = (await (await exchange(flow, code)).json()) as Tokens;
+    expect(tokens.scope).toBe("mcp:read");
   });
 });

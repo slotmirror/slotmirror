@@ -2960,6 +2960,32 @@ details.swatch > summary::-webkit-details-marker {
   height: 36px;
 }
 
+.token-form .token-events {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.token-form .token-events input {
+  width: auto;
+  height: auto;
+}
+
+.badge.scope {
+  margin-left: 8px;
+}
+
+.consent-events {
+  display: flex;
+  flex-basis: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+}
+
 .token-created {
   margin-bottom: 16px;
   padding: 16px;

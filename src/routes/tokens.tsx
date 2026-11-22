@@ -7,7 +7,7 @@ import {
   TOKEN_DAYS,
 } from "../api-tokens";
 import type { AppEnv } from "../app-env";
-import { mcpEnabled } from "../config";
+import { mcpEnabled, mcpEventsEnabled } from "../config";
 import { disconnectApp, listConnectedApps } from "../mcp-oauth";
 import { i18nFromContext } from "../i18n";
 import { TokensPage } from "../pages/tokens";
@@ -32,6 +32,11 @@ function currentUser(c: Context<AppEnv>): SignedInUser {
   return user;
 }
 
+/** Whether a new token may read calendar events, if its user ticks the box. */
+function offersEvents(c: Context<AppEnv>, user: SignedInUser): boolean {
+  return mcpEventsEnabled(c.env) && can(user, "events:read");
+}
+
 function endpoint(c: Context<AppEnv>): string {
   const base = c.env.PUBLIC_URL?.trim().replace(/\/+$/, "") || new URL(c.req.url).origin;
   return `${base}/mcp`;
@@ -51,6 +56,7 @@ async function renderPage(
       apps={await listConnectedApps(c.env.DB, user.id)}
       endpoint={endpoint(c)}
       canCreate={can(user, "tokens:create")}
+      offerEvents={offersEvents(c, user)}
       {...extra}
     />,
     status,
@@ -71,7 +77,9 @@ tokens.post("/", async (c) => {
   ) {
     return renderPage(c, { problem: t.tokens.invalid }, 400);
   }
-  const created = await createApiToken(c.env, currentUser(c), { name, days });
+  const user = currentUser(c);
+  const events = form.events === "1" && offersEvents(c, user);
+  const created = await createApiToken(c.env, user, { name, days, events });
   if (!created) return renderPage(c, { problem: t.tokens.limitReached }, 409);
   return renderPage(c, { created: created.token });
 });

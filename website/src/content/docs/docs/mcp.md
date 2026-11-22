@@ -1,11 +1,13 @@
 ---
 title: MCP server
-description: Let an AI agent read your accounts, rules and sync status over the Model Context Protocol.
+description: Let an AI agent read your accounts, rules, sync status and, if you allow it, your events over the Model Context Protocol.
 ---
 
 slotmirror has an optional, read-only MCP server. An agent such as Claude Code can then answer
-"Is my sync running, and if not, why?". It cannot change anything. It reads no calendars and sees no
-event content.
+"Is my sync running, and if not, why?". It cannot change anything. By default it reads no calendars
+and sees no event content. An operator can also offer [`list_events`](#calendar-events), which
+answers "What is on my calendar today?" across all your accounts, for the tokens and apps that you
+allow.
 
 The server is off by default. While it is off, `/mcp`, `/tokens` and the OAuth endpoints answer 404.
 
@@ -13,6 +15,7 @@ The server is off by default. While it is off, `/mcp`, `/tokens` and the OAuth e
 
 1. Set the variable `MCP_ENABLED` to `1`.
 2. Apply the migrations, as for every [update](/docs/updating/).
+3. Optional: set `MCP_EVENTS_ENABLED` to `1` to offer [`list_events`](#calendar-events).
 
 ## Connect a client
 
@@ -33,10 +36,16 @@ claude mcp add --transport http slotmirror https://sync.example.com/mcp
 In Claude Code, run `/mcp` once to sign in. Connected apps appear under **API tokens**, where you can
 disconnect them.
 
+In the Claude apps (web, desktop, mobile), add a custom connector with the endpoint as its URL and
+leave the OAuth fields empty. Claude registers itself and opens the consent page. The deployment
+must be reachable from the internet over HTTPS, because Claude connects from its own servers. These
+apps cannot send a personal token, so they always use OAuth.
+
 ### With a personal token
 
 For a script, or a client without OAuth: open **API tokens** in the app and create a token. It is
-shown once. Clients send it in the `Authorization` header:
+shown once. Tick **Also read my calendar events** if the token is for `list_events`; a token cannot
+gain that later. Clients send the token in the `Authorization` header, never in the URL:
 
 ```sh
 claude mcp add --transport http slotmirror https://sync.example.com/mcp \
@@ -50,6 +59,7 @@ claude mcp add --transport http slotmirror https://sync.example.com/mcp \
 | `list_accounts`   | Connected accounts, and whether one needs reconnecting                  |
 | `list_rules`      | Rules: source, target, detail level, buffers, which filters are on      |
 | `get_sync_status` | For each rule: state of the last run, its changes, blocks in the target |
+| `list_events`     | Events of all source calendars in a window. Only if allowed, see below  |
 
 A rule is one direction, so `blocks` is the count for that direction. It is the result of the last
 run inside the rule's sync window, not a live count of the calendar. `blocksExact` is false if the
@@ -69,13 +79,75 @@ For `error`, `code` names the reason of a failed run, and `aborted` means that t
 platform limit. `failed` counts blocks that failed in a run that otherwise finished. An answer lists
 at most 200 rules or 100 accounts and sets `truncated` if more exist.
 
+## Calendar events
+
+`list_events` returns the events of all source calendars of all your connected accounts for a time
+window, merged and sorted by start. It exists only if both are true:
+
+- The operator set `MCP_EVENTS_ENABLED=1`. Without it, no token or app sees the tool, also one that
+  you allowed earlier.
+- You allowed it for this credential: the box **Also read my calendar events** when you create a
+  token, or the box on the consent page when you connect an app. Both start unticked. Tokens and
+  apps from before this tool never read events. The token page marks those that do.
+
+Arguments, all optional:
+
+| Argument         | Meaning                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `start`, `end`   | A date (`2026-05-04`, midnight in `timeZone`) or a date and time with an offset            |
+| `timeZone`       | IANA zone for dates and for the times in the answer. Default: your working hours, else UTC |
+| `accounts`       | Only these accounts, by ID or address                                                      |
+| `calendars`      | Only calendars with these names                                                            |
+| `query`          | Only events whose shown title or location contains this text                               |
+| `includeMirrors` | Also list the blocks that slotmirror wrote                                                 |
+
+Without a window, the answer covers today. A window is at most 31 days long.
+
+Each event names its account and calendar, and has `title`, `location`, `start`, `end`, `allDay`,
+`showAs`, `private`, `declined`, `recurring` (one occurrence of a series) and `mirror`. Times carry
+the offset of `timeZone`; all-day events have dates, and `end` is exclusive.
+
+What the tool leaves out:
+
+- **Private events** show only their time and status: `title` and `location` are null, and `query`
+  cannot find them by title.
+- **Org accounts** show no more than `MAX_DETAIL_TO_EXTERNAL` allows, because the agent counts as
+  outside the org. With the cap `busy`, their titles are null too.
+- **Blocks that slotmirror wrote** are left out, or every mirrored meeting would show twice. Set
+  `includeMirrors` to see them, with `mirror: true`.
+- **Bodies, attendees and online meeting links** never leave. The same meeting in two accounts shows
+  twice: the accounts share no ID that would identify it safely.
+- **Links in a title or location** go, with the whole word that holds them, because a meeting link
+  often holds its passcode. A word shaped like a host and a path, such as `Node.js/React`, goes
+  too, and so do words that only a tab or line break joins to a link, or that form one together:
+  `Abt.` and `IT/Recht` on two lines read as a host and a path. Every run of white space
+  turns into one space. A title or location longer than 2,000 characters is cut. The word at the
+  cut goes, with every word that only a tab or line break joins to it: the rest ends in `…`, or
+  the field is null if no word remains. The filter removes links, not passcodes or meeting codes
+  written as plain words, such as `Passcode: 123456` or a meeting code on its own.
+- **Calendars that are no source calendar** are not read. Turn a calendar on as a source in the
+  editor to include it.
+
+A calendar that cannot be read stands in `errors` with a code: `reconnect`, `throttled` (with
+`retryAfterSeconds`), `gone` or `failed`. The events of the other calendars are still complete. One
+call reads up to 25 calendars and returns up to 500 events; `calendarsTruncated` and `truncated` say
+when more exist. With `accounts` or `calendars`, the limit of 25 counts only the calendars that
+match, and `calendarsTruncated` is also set if more than 200 calendars had to be checked.
+
+The tool reads through the same queue as the sync, one provider call per account at a time. While a
+provider throttles an account, the tool makes no call for it and reports `throttled`, so that an
+agent never extends the wait of the sync. A call counts as one tool call toward the
+[limits](#limits).
+
 ## What a client can see
 
 A token shows only the data of the user who created it, also for an admin. The answers contain email
 addresses and display names of connected accounts, and calendar names. A calendar name can say something about you, and
 someone else can set it on a shared calendar, so an agent must treat it as data, not as an
-instruction. They never contain event titles, category names, block
-titles, tenant IDs or tokens.
+instruction. Without `list_events` they never contain event titles, category names, block
+titles, tenant IDs or tokens. With `list_events`, they contain event titles and locations as
+described above, which other people write; the same rule applies. Category names, bodies,
+attendees, tenant IDs and tokens stay out in every case.
 
 ## Tokens
 

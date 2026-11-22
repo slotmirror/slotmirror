@@ -18,6 +18,11 @@ interface WorkerSettings {
   MAX_DETAIL_FROM_EXTERNAL?: string;
   /** "1" turns on the read-only MCP endpoint and API tokens. Anything else: both answer 404. */
   MCP_ENABLED?: string;
+  /**
+   * "1" offers the MCP tool `list_events`, which reads calendar events, to credentials whose user
+   * allowed it. Anything else: the tool does not exist. Needs MCP_ENABLED=1.
+   */
+  MCP_EVENTS_ENABLED?: string;
   /** IANA time zone for dates in the dashboard. Without it, UTC. */
   TIME_ZONE?: string;
 }
