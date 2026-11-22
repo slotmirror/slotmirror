@@ -148,7 +148,9 @@ describe("form-action 'self'", () => {
 });
 
 describe("sign-out", () => {
-  it("clears the session and redirects when the body is malformed multipart", async () => {
+  it("redirects and clears the session when the body is malformed multipart", async () => {
+    // The status and the redirect prove the fix: without it, parseBody() throws and this answers
+    // 500. The cookie assertion is a regression guard: the 500 already cleared the cookie.
     const { cookie } = await signIn("owner@example.com");
     const logout = await exports.default.fetch(`${BASE}/auth/logout`, {
       method: "POST",
