@@ -121,8 +121,10 @@ What the tool leaves out:
   often holds its passcode. A word shaped like a host and a path, such as `Node.js/React`, goes
   too, and so do words that only a tab or line break joins to a link, or that form one together:
   `Abt.` and `IT/Recht` on two lines read as a host and a path. Every run of white space
-  turns into one space. A title or location longer than 2,000 characters is cut, and the word at
-  the cut goes: the rest ends in `…`, or the field is null if no word remains.
+  turns into one space. A title or location longer than 2,000 characters is cut. The word at the
+  cut goes, with every word that only a tab or line break joins to it: the rest ends in `…`, or
+  the field is null if no word remains. The filter removes links, not passcodes or meeting codes
+  written as plain words, such as `Passcode: 123456` or a meeting code on its own.
 - **Calendars that are no source calendar** are not read. Turn a calendar on as a source in the
   editor to include it.
 
