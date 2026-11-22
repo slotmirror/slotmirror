@@ -45,25 +45,100 @@ const DATE_TIME =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|[+-](\d{2}):(\d{2}))$/i;
 
 /**
- * Web addresses, with or without a scheme, and the hosts of meeting services written without one.
- * A meeting link often holds its passcode, so it never leaves in a title or location.
+ * The rest of a link after its start. It stops at white space and quotes, and leaves closing
+ * punctuation at its end, so that "(see https://…)" keeps its bracket.
  */
-const LINK =
-  /\b(?:https?:\/\/|www\.)\S+|\b(?:[\w-]+\.)*(?:zoom\.us|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com|webex\.com|gotomeeting\.com|gotomeet\.me|whereby\.com|meet\.jit\.si|chime\.aws)(?:[/?#]\S*)?/gi;
+const REST = String.raw`(?:[^\s<>"]*[^\s<>"'.,;:!?)\]}])?`;
+/** A host name followed by a port, path, query or fragment. The top-level domain is ASCII. */
+const HOST = String.raw`(?:[\p{L}\p{N}-]+\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]+)`;
+/** No host starts inside a word, a host name or an email address. */
+const HOST_START = String.raw`(?<![\p{L}\p{N}@.-])`;
 
-/** A title or location without links. Null if nothing but links and separators remains. */
+/**
+ * Links in the order they are removed. A meeting link often holds its passcode, so no link leaves
+ * in a title or location. The rules are generic, not a list of meeting services: a new service, a
+ * regional host or an address without a scheme is a link all the same. Each rule starts with a
+ * fixed text or at the start of a word, so that a long title takes linear time.
+ */
+const LINKS = [
+  // Web schemes, also glued to a word, as in "Meetinghttps://…".
+  new RegExp(String.raw`(?:https?|ftps?|sftp|wss?):\/\/${REST}`, "giu"),
+  // Any other scheme with "//", such as zoommtg:// or webcal://.
+  new RegExp(String.raw`(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/${REST}`, "giu"),
+  // Schemes without "//". A list, because "Re:Budget" looks like a scheme too.
+  new RegExp(
+    String.raw`\b(?:mailto|tel|sips?|callto|skype|facetime(?:-audio)?|xmpp|sms|msteams):[^\s<>"]+`,
+    "giu",
+  ),
+  // Protocol-relative: "//host/path".
+  new RegExp(String.raw`(?<![\p{L}\p{N}])\/\/(?=[^\s/])${REST}`, "giu"),
+  new RegExp(String.raw`\bwww\.${REST}`, "giu"),
+  // A host without a scheme, followed by a port, path, query or fragment: "example.com/join?pwd=1".
+  new RegExp(String.raw`${HOST_START}${HOST}(?::\d{1,5})?[/?#]${REST}`, "giu"),
+  new RegExp(String.raw`(?<![\p{N}.])\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?[/?#]${REST}`, "giu"),
+  // A plain host name stays ("example.com" can name a venue), except a meeting service's.
+  new RegExp(
+    String.raw`${HOST_START}(?:[\p{L}\p{N}-]+\.)*(?:zoom\.us|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com|webex\.com|gotomeeting\.com|gotomeet\.me|whereby\.com|meet\.jit\.si|chime\.aws)\b`,
+    "giu",
+  ),
+];
+
+/** Stands in for a removed link until the text around it is cleaned up. A private-use character. */
+const GAP = "\uE000";
+const SEPARATORS = String.raw`\s,;:|/\\_·•–\u2014-`;
+
+/**
+ * A title or location without links. Null if nothing but links and separators remains. The text is
+ * NFKC-normalized first, so that "ｈｔｔｐｓ://" is a link too.
+ */
 export function withoutLinks(text: string): string | null {
   if (text === "") return "";
-  const cleaned = text
-    .replace(LINK, " ")
+  let marked = text.normalize("NFKC").replaceAll(GAP, "");
+  for (const link of LINKS) marked = marked.replace(link, GAP);
+  // Short runs of white space keep the clean-up below linear.
+  marked = marked.replace(/\s{2,}/g, " ");
+  if (marked.includes(GAP)) {
+    // Brackets around a link: "<link>", "(link)", "[Join](link)". Nested ones need a few passes.
+    for (let pass = 0; pass < 3; pass++) {
+      marked = marked.replace(/[<([{]\s*\uE000\s*[>)\]}]/gu, GAP);
+    }
+    marked = marked
+      .replace(/\[([^[\]\uE000\n]*)\]\uE000/gu, "$1")
+      // A link between two equal separators, as in "Room 4, <link>, floor 2".
+      .replace(/([,;|/·•–-])(?:\s*\uE000\s*\1)+/gu, "$1")
+      // A link at the edge of a bracket, as in "(see <link>)".
+      .replace(/\s*\uE000\s*(?=[)\]}>])/gu, "")
+      .replace(/(?<=[([{<])\s*\uE000\s*/gu, "")
+      // Separators that stood between the text and a link, such as "Room 4 / <link>".
+      .replace(new RegExp(String.raw`^[${SEPARATORS}]*(?:\uE000[${SEPARATORS}]*)+`, "u"), "")
+      .replace(
+        new RegExp(
+          String.raw`(?<![${SEPARATORS}])[${SEPARATORS}]*(?:\uE000[${SEPARATORS}]*)+$`,
+          "u",
+        ),
+        "",
+      )
+      .replaceAll(GAP, " ");
+  }
+  const cleaned = marked
     .replace(/\s{2,}/g, " ")
-    // Separators that stood between the text and a link, such as "Room 4 / <link>".
-    .replace(/^[\s,;|/–-]+|[\s,;|/–-]+$/g, "");
+    .replace(/^[\s,;|/–-]+|(?<![\s,;|/–-])[\s,;|/–-]+$/g, "");
   return /[\p{L}\p{N}]/u.test(cleaned) ? cleaned : null;
 }
 
-/** True if a checked date (`YYYY-MM-DD`) exists: Date.UTC rolls 2026-02-30 over into March. */
+/**
+ * Years that a date argument may name. Later years would need more than four digits in ISO 8601
+ * once a window or an offset moves past 9999, and no calendar holds events from before 1970.
+ */
+const FIRST_YEAR = 1970;
+const LAST_YEAR = 2199;
+
+/**
+ * The time of a checked date (`YYYY-MM-DD`) at UTC midnight, or NaN if the date does not exist
+ * (Date.UTC rolls 2026-02-30 over into March) or lies outside FIRST_YEAR to LAST_YEAR.
+ */
 function realDate(year: string, month: string, day: string): number {
+  if (Number(year) < FIRST_YEAR || Number(year) > LAST_YEAR) return Number.NaN;
   const time = Date.UTC(Number(year), Number(month) - 1, Number(day));
   return new Date(time).toISOString().slice(0, 10) === `${year}-${month}-${day}`
     ? time
@@ -180,6 +255,11 @@ function instantOf(value: string, zone: string): number {
   return Date.parse(value);
 }
 
+/** UTC midnight of a date that DATE matched. */
+function utcMidnight(date: RegExpExecArray): number {
+  return Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3]));
+}
+
 /** The window of a call, or a problem. Without arguments: today in `zone`. */
 export function windowOf(
   input: Pick<ListEventsInput, "start" | "end">,
@@ -194,16 +274,14 @@ export function windowOf(
     start = localInstant(zone, today, 0);
     end = localInstant(zone, today + DAY_MS, 0);
   }
-  start ??= (end as number) - DAY_MS;
+  // A window that ends on a date starts at the midnight before, also on a day with a clock change.
+  const endDate = input.end === undefined ? null : DATE.exec(input.end);
+  start ??= endDate
+    ? localInstant(zone, utcMidnight(endDate) - DAY_MS, 0)
+    : (end as number) - DAY_MS;
   // A window that starts on a date ends at the next midnight, also on a day with a clock change.
   const startDate = input.start === undefined ? null : DATE.exec(input.start);
-  end ??= startDate
-    ? localInstant(
-        zone,
-        Date.UTC(Number(startDate[1]), Number(startDate[2]) - 1, Number(startDate[3])) + DAY_MS,
-        0,
-      )
-    : start + DAY_MS;
+  end ??= startDate ? localInstant(zone, utcMidnight(startDate) + DAY_MS, 0) : start + DAY_MS;
   // The limit counts calendar days in `zone`: a month across a clock change has 745 hours.
   const startDay = localDate(zone, start);
   const wallMinutes = (start + offsetAt(zone, start) - startDay) / 60_000;
@@ -316,13 +394,14 @@ export async function listEvents(
     sources,
     truncated: calendarsTruncated,
     workTimeZone,
-  } = await readEventSources(env.DB, userId);
+  } = await readEventSources(env.DB, userId, input);
   const zone = canonicalTimeZone(
     input.timeZone ?? (workTimeZone && isTimeZone(workTimeZone) ? workTimeZone : "UTC"),
   );
   const window = windowOf(input, zone, now);
   if ("problem" in window) return window;
 
+  // The query found every calendar that the filters may name; this applies their exact case rules.
   const chosen = sources.filter(
     (source) =>
       matches(input.accounts, [source.accountId, source.email]) &&

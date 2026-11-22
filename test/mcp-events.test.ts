@@ -10,7 +10,12 @@ import * as zm from "zod/mini";
 import { MAX_SOURCE_CACHE, type AccountSync } from "../src/account-sync";
 import { createApiToken } from "../src/api-tokens";
 import worker from "../src/index";
-import { LIST_EVENTS_INPUT_SCHEMA, listEventsInput, MAX_EVENTS } from "../src/mcp-events";
+import {
+  LIST_EVENTS_INPUT_SCHEMA,
+  listEventsInput,
+  MAX_EVENTS,
+  withoutLinks,
+} from "../src/mcp-events";
 import {
   changeFakeWireEvent,
   type FakeEvent,
@@ -239,6 +244,11 @@ describe("arguments", () => {
     ["hour 24", { start: "2026-01-01T24:00Z" }, /YYYY-MM-DD/],
     ["minute 60", { start: "2026-01-01T10:60:00Z" }, /YYYY-MM-DD/],
     ["an offset past 23 hours", { start: "2026-01-01T10:00+25:00" }, /YYYY-MM-DD/],
+    // Years outside 1970 to 2199: 9999-12-31 used to answer with "+010000-01-01T…".
+    ["a year past 2199", { start: "9999-12-31" }, /YYYY-MM-DD/],
+    ["an end in a year past 2199", { end: "2200-01-01" }, /YYYY-MM-DD/],
+    ["a date-time in a year past 2199", { start: "2200-01-01T00:00:00Z" }, /YYYY-MM-DD/],
+    ["a year before 1970", { start: "1969-12-31T23:00:00Z" }, /YYYY-MM-DD/],
   ];
   for (const [label, args, message] of refusals) {
     it(`refuses ${label} with a tool error the model can read`, async () => {
@@ -264,6 +274,35 @@ describe("arguments", () => {
       .bind(userId)
       .first<{ calls: number }>();
     expect(charged?.calls).toBe(1);
+  });
+
+  it("takes dates from 1970 to 2199", async () => {
+    const { token } = await user();
+    expect(await listEvents(token, { start: "1970-01-01" })).toMatchObject({
+      start: "1970-01-01T00:00:00Z",
+      end: "1970-01-02T00:00:00Z",
+    });
+    expect(await listEvents(token, { start: "2199-12-31" })).toMatchObject({
+      start: "2199-12-31T00:00:00Z",
+      end: "2200-01-01T00:00:00Z",
+    });
+  });
+
+  it("starts a window that names only an end date at the midnight before, also across a clock change", async () => {
+    const { token } = await user();
+    // Vienna moves its clocks on 2026-03-29 (23 hours) and on 2026-10-25 (25 hours).
+    for (const [end, start, endIso] of [
+      ["2026-03-30", "2026-03-29T00:00:00+01:00", "2026-03-30T00:00:00+02:00"],
+      ["2026-10-26", "2026-10-25T00:00:00+02:00", "2026-10-26T00:00:00+01:00"],
+      ["2027-01-16", "2027-01-15T00:00:00+01:00", "2027-01-16T00:00:00+01:00"],
+    ]) {
+      const answer = await listEvents(token, { end, timeZone: "Europe/Vienna" });
+      expect(answer).toMatchObject({ start, end: endIso });
+    }
+    // An end with a time still starts 24 hours before.
+    expect(
+      await listEvents(token, { end: "2026-03-30T12:00:00+02:00", timeZone: "Europe/Vienna" }),
+    ).toMatchObject({ start: "2026-03-29T12:00:00+02:00" });
   });
 
   it("counts the 31 days in calendar days, also across a clock change", async () => {
@@ -436,6 +475,27 @@ describe("events", () => {
     );
   });
 
+  it("never shows a link of any host or scheme in a title or location", async () => {
+    const { token, userId } = await user();
+    const stub = await account(userId, "link-b");
+    await wireEvent(stub, "a", {
+      ...timed(9),
+      title: "Weekly teams.cloud.microsoft/l/meetup-join/19%3aSECRET",
+      location: "[Join](https://zoom.us/j/1?pwd=SECRET)",
+    });
+    await wireEvent(stub, "b", {
+      ...timed(10),
+      title: "Meetinghttps://example.com/x?token=SECRET",
+      location: "Room 4.2, ｈｔｔｐｓ：／／ｚｏｏｍ．ｕｓ／ｊ／１２３?pwd=SECRET",
+    });
+    const answer = await listEvents(token, { start: START });
+    expect(answer.events.map((item) => [item.title, item.location])).toEqual([
+      ["Weekly", "Join"],
+      ["Meeting", "Room 4.2"],
+    ]);
+    expect(JSON.stringify(answer)).not.toMatch(/SECRET|zoom|microsoft|https?:/i);
+  });
+
   it("shows a private event only with its time, and a query cannot find its title", async () => {
     const { token, userId } = await user();
     const stub = await account(userId, "prv-a");
@@ -556,6 +616,119 @@ describe("failures and limits", () => {
     );
     const answer = await listEvents(token, { start: START });
     expect(answer.calendarsTruncated).toBe(true);
+  });
+
+  it("filters accounts and calendars before the calendar limit", async () => {
+    const { token, userId } = await user();
+    await account(userId, "cap-a");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = 'cap-a'").bind(
+        JSON.stringify({ workTimeZone: "Europe/Vienna" }),
+      ),
+      ...Array.from({ length: MAX_EVENT_CALENDARS }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO calendars (id, account_id, remote_id, name, is_source)
+           VALUES (?, 'cap-a', ?, ?, 1)`,
+        ).bind(`cap-a-${i}`, `remote-${i}`, `Extra ${String(i).padStart(2, "0")}`),
+      ),
+    ]);
+    // Sorts after the limit: a later account.
+    const late = await account(userId, "cap-z", { calendar: "Späte Übung" });
+    await late.addFakeEvent(event("late", 9, { subject: "After the limit" }));
+
+    // Control: without a filter, the limit leaves the later account out.
+    const all = await listEvents(token, { start: START });
+    expect(all.calendarsTruncated).toBe(true);
+    expect(all.events.map((item) => item.title)).not.toContain("After the limit");
+
+    for (const filter of [
+      { accounts: ["cap-z"] },
+      { accounts: [" CAP-Z@example.com "] },
+      { calendars: ["späte übung"] },
+      // SQLite folds the case of ASCII letters only; the answer still matches this name.
+      { calendars: ["SPÄTE ÜBUNG"] },
+    ]) {
+      const answer = await listEvents(token, { start: START, ...filter });
+      expect(answer.events.map((item) => item.title)).toEqual(["After the limit"]);
+      expect(answer.calendarsTruncated).toBe(false);
+      // The zone of the first account's working hours applies, also when a filter leaves it out.
+      expect(answer.timeZone).toBe("Europe/Vienna");
+    }
+    // More matching calendars than the limit still say so.
+    const many = await listEvents(token, { start: START, accounts: ["cap-a"] });
+    expect(many.calendarsTruncated).toBe(true);
+    // A filter that names no calendar reads none.
+    const none = await listEvents(token, { start: START, calendars: ["Extra_0%"] });
+    expect(none).toMatchObject({ events: [], errors: [], calendarsTruncated: false });
+  });
+});
+
+describe("withoutLinks", () => {
+  // Every link must go: the host does not matter, nor whether a scheme or a word comes first.
+  const removed: [string, string | null][] = [
+    ["Sync teams.cloud.microsoft/l/meetup-join/19%3aSECRET", "Sync"],
+    ["gov.teams.microsoft.us/l/meetup-join/SECRET", null],
+    ["Call join.skype.com/SECRET", "Call"],
+    ["meet.lync.com/org/user/SECRET", null],
+    ["Demo bluejeans.com/123/SECRET", "Demo"],
+    ["facetime.apple.com/join#v=1&p=SECRET", null],
+    ["Board meetings.ringcentral.com/j/SECRET", "Board"],
+    ["8x8.vc/company/SECRET", null],
+    ["Party example.com/join?pwd=SECRET", "Party"],
+    ["Host example.com:8443/SECRET", "Host"],
+    ["Host 10.0.0.1:8443/join?SECRET", "Host"],
+    ["Room 2 //example.com/x?pwd=SECRET", "Room 2"],
+    ["Meetinghttps://example.com/x?token=SECRET", "Meeting"],
+    ["Room_https://example.com/SECRET", "Room"],
+    ["Sync ｈｔｔｐｓ://ｚｏｏｍ.ｕｓ/ｊ/１２３?pwd=SECRET", "Sync"],
+    ["Files ftp://example.com/SECRET", "Files"],
+    ["Ask mailto:SECRET@example.com", "Ask"],
+    ["Dial tel:+43SECRET", "Dial"],
+    ["Open zoommtg://zoom.us/join?confno=SECRET", "Open"],
+    ["Teams msteams:/l/meetup-join/SECRET", "Teams"],
+    ["Sync www.example.com", "Sync"],
+    // What stood around a link goes with it.
+    ["[Join](https://zoom.us/j/1?pwd=SECRET)", "Join"],
+    ["Call <https://example.com/SECRET>", "Call"],
+    ["(see https://example.com/SECRET)", "(see)"],
+    ["Room 4, https://example.com/SECRET, floor 2", "Room 4, floor 2"],
+    ["Room 4 / https://example.com/SECRET / floor 2", "Room 4 / floor 2"],
+    ["Agenda: https://example.com/SECRET", "Agenda"],
+    ["zoom.usx/j/SECRET", null],
+    ["Sync meet.google.com.evil/SECRET", "Sync"],
+    // A meeting service's host goes also without a path.
+    ["Call on zoom.us", "Call on"],
+  ];
+  for (const [text, expected] of removed) {
+    it(`removes the link from "${text}"`, () => {
+      const cleaned = withoutLinks(text);
+      expect(cleaned).toBe(expected);
+      expect(cleaned ?? "").not.toMatch(/SECRET|\/\/|[[(<]$/);
+    });
+  }
+
+  // Text that only looks like part of a link stays as it is.
+  const kept = [
+    "Room 4.2",
+    "Release v1.5",
+    "Dr. Smith",
+    "St. Pölten",
+    "Kick-off 10.30-11.00",
+    "Re:Budget",
+    "Q&A: wrap-up",
+    "Lunch (Café Central)",
+    // A plain host without a path can name a venue, and holds no meeting ID or passcode.
+    "Party at example.com",
+  ];
+  for (const text of kept) {
+    it(`keeps "${text}"`, () => {
+      expect(withoutLinks(text)).toBe(text);
+    });
+  }
+
+  it("keeps an empty text, and gives null for a text of links only", () => {
+    expect(withoutLinks("")).toBe("");
+    expect(withoutLinks("https://example.com/a, example.com/b")).toBeNull();
   });
 });
 

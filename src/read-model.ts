@@ -314,35 +314,82 @@ export interface EventSource {
   needsReconnect: boolean;
 }
 
+/** The `accounts` and `calendars` arguments of `list_events`. */
+export interface EventSourceFilters {
+  accounts?: readonly string[] | undefined;
+  calendars?: readonly string[] | undefined;
+}
+
+/**
+ * LIKE patterns for a filter, or null for no filter. SQLite folds the case of ASCII letters only,
+ * so every other character matches any one character. The caller checks each row again with the
+ * full case rules; the pattern only has to find every calendar the check accepts.
+ */
+function likePatterns(values: readonly string[] | undefined): string | null {
+  if (!values || values.length === 0) return null;
+  return JSON.stringify(
+    values.map((value) =>
+      // Code points, as SQLite matches `_` against one character.
+      Array.from(value.trim())
+        .map((char) => {
+          if (char === "!" || char === "%" || char === "_") return `!${char}`;
+          return char.charCodeAt(0) < 0x80 ? char : "_";
+        })
+        .join(""),
+    ),
+  );
+}
+
 /**
  * The user's source calendars, the ones the editor reads, and the time zone of the user's first
  * account with working hours. Only calendars that the user turned on as sources are read: a
- * calendar shared with the account, but never chosen, stays out.
+ * calendar shared with the account, but never chosen, stays out. The filters apply before the
+ * limit, so that every calendar the filters name can be read; `truncated` says that more calendars
+ * match than one call reads.
  */
 export async function readEventSources(
   db: D1Database,
   userId: string,
+  filters: EventSourceFilters = {},
 ): Promise<{ sources: EventSource[]; truncated: boolean; workTimeZone: string | null }> {
   const { results } = await db
     .prepare(
       `SELECT c.id AS calendarId, c.name AS calendar, c.remote_id AS remoteId,
               a.id AS accountId, a.email, COALESCE(a.display_name, a.email) AS account,
-              a.tenant_id AS tenantId, a.needs_reconnect AS needsReconnect,
-              a.work_hours AS workHours
+              a.tenant_id AS tenantId, a.needs_reconnect AS needsReconnect
        FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE a.user_id = ? AND c.is_source = 1
-       ORDER BY a.created_at, a.id, c.name, c.id LIMIT ?`,
+       WHERE a.user_id = ?1 AND c.is_source = 1
+         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(?2) f
+              WHERE a.id LIKE f.value ESCAPE '!' OR a.email LIKE f.value ESCAPE '!'))
+         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM json_each(?3) f
+              WHERE c.name LIKE f.value ESCAPE '!' OR c.id LIKE f.value ESCAPE '!'))
+       ORDER BY a.created_at, a.id, c.name, c.id LIMIT ?4`,
+    )
+    .bind(
+      userId,
+      likePatterns(filters.accounts),
+      likePatterns(filters.calendars),
+      MAX_EVENT_CALENDARS + 1,
+    )
+    .all<Omit<EventSource, "needsReconnect"> & { needsReconnect: number }>();
+  // The zone does not depend on the filters, so that a date means the same day with and without.
+  const { results: hours } = await db
+    .prepare(
+      `SELECT a.work_hours AS workHours FROM accounts a
+       WHERE a.user_id = ? AND a.work_hours IS NOT NULL
+         AND EXISTS (SELECT 1 FROM calendars c WHERE c.account_id = a.id AND c.is_source = 1)
+       ORDER BY a.created_at, a.id LIMIT ?`,
     )
     .bind(userId, MAX_EVENT_CALENDARS + 1)
-    .all<
-      Omit<EventSource, "needsReconnect"> & { needsReconnect: number; workHours: string | null }
-    >();
+    .all<{ workHours: string }>();
   let workTimeZone: string | null = null;
-  for (const row of results) {
-    if (workTimeZone !== null || !row.workHours) continue;
+  for (const row of hours) {
     try {
       const zone = (JSON.parse(row.workHours) as { workTimeZone?: unknown }).workTimeZone;
-      if (typeof zone === "string" && zone !== "") workTimeZone = zone;
+      if (typeof zone === "string" && zone !== "") {
+        workTimeZone = zone;
+        break;
+      }
     } catch {
       // A stored value that does not parse names no zone.
     }
