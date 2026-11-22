@@ -780,6 +780,19 @@ describe("withoutLinks", () => {
     ["Join meet.google.com abc-defg-hij", "Join"],
     ["Join meet.google.com - abc-defg-hij", "Join"],
     ["Join meet.google.com, code abc-defg-hij", "Join code"],
+    ["Join https://meet.google.com - abc-defg-hij", "Join"],
+    ["Join https://meet.google.com abc-defg-hij", "Join"],
+    ["Join //meet.google.com abc-defg-hij", "Join"],
+    ["Join meet.google.com?x=1 abc-defg-hij", "Join"],
+    ["Join meet.google.com abc\n-defg-hij", "Join"],
+    // A URL parser decodes percent-encoded bytes of a host, also in UTF-8.
+    ["Join zoom.%75s/j/1234567890", "Join"],
+    ["Join teams.microsoft.c%6fm/l/meetup-join/19%3ameeting_SECRET", "Join"],
+    ["Join example.c%6fm/j/1SECRET", "Join"],
+    ["Join zoom%E3%80%82us/j/1SECRET", "Join"],
+    ["Join zoom%EF%BC%8Eus/j/1SECRET", "Join"],
+    ["Call on %7aoom.us", "Call on"],
+    ["Visit www.ex%61mple.com", "Visit"],
     ["Join zoommtg:join?confno=SECRET", "Join"],
     ["Open data:text/html,SECRET", "Open"],
     ["Run javascript:alert(1)SECRET", "Run"],
@@ -845,6 +858,8 @@ describe("withoutLinks", () => {
     "WWW.Kongress 2026",
     // The shape of a Meet code stays without a Meet link in the field.
     "one-time-fee review",
+    // A percent sign without valid bytes after it.
+    "50%-Rabatt %ZZ %E3%80 review",
   ];
   for (const text of kept) {
     it(`keeps ${JSON.stringify(text)}`, () => {
@@ -860,6 +875,8 @@ describe("withoutLinks", () => {
     ["Sync //TODO", "Sync"],
     // A word that only a line break joins to a link goes with it, as a URL parser would join them.
     ["Building A\nRoom 4\nhttps://zoom.us/j/1", "Building A Room"],
+    // Joined, "Abt." and "IT/Recht" are a host and a path.
+    ["Abt.\nIT/Recht", null],
   ];
   for (const [text, expected] of lost) {
     it(`drops the link-shaped word in ${JSON.stringify(text)}`, () => {
@@ -872,6 +889,9 @@ describe("withoutLinks", () => {
     expect(withoutLinks("A\tB\r\nC")).toBe("A B C");
     expect(withoutLinks("A\u0085B\u2028C\u2029D")).toBe("A B C D");
     expect(withoutLinks("  A   B  ")).toBe("A B");
+    // A Markdown label that starts with a space leaves an empty word.
+    expect(withoutLinks("See [ Join](https://example.com/a) here")).toBe("See Join here");
+    expect(withoutLinks("[ Join](https://example.com/a)")).toBe("Join");
   });
 
   it("keeps an empty text, and gives null for a text of links only", () => {

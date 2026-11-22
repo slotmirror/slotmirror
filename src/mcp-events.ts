@@ -98,32 +98,33 @@ const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 /** Characters that separate parts of a title, as in "Room 4 / floor 2". */
 const SEPARATORS = new Set(Array.from("\\,;:|/_·•–\u2014-"));
 
-/** Percent-encoded characters of a link, as in "https%3A%2F%2Fexample.com". */
-const ENCODED: Record<string, string> = {
-  "%2e": ".",
-  "%2f": "/",
-  "%3a": ":",
-  "%3d": "=",
-  "%3f": "?",
-  "%23": "#",
-  "%40": "@",
-};
+/** Bytes of percent-encoded text. A URL parser decodes them in the host before IDNA. */
+const PERCENT_RUN = /(?:%[\da-f]{2})+/gi;
+/** Replaces an invalid UTF-8 sequence with U+FFFD and never throws. */
+const UTF8 = new TextDecoder();
+
+function percentDecoded(run: string): string {
+  const bytes = new Uint8Array(run.length / 3);
+  for (let i = 0; i < bytes.length; i++)
+    bytes[i] = Number.parseInt(run.slice(i * 3 + 1, i * 3 + 3), 16);
+  return UTF8.decode(bytes);
+}
 
 /**
- * The form of a word that the link rules read: NFKC, without format characters and the characters
- * that IDNA ignores (variation selectors, the combining grapheme joiner), without marks at the start
- * of a label, with ideographic and full-width dots as "." and backslashes as "/", in lower case,
- * with the characters of a link decoded. It never reaches an answer, so that "m²" stays "m²".
+ * The form of a word that the link rules read: percent-decoded, NFKC, without format characters
+ * and the characters that IDNA ignores (variation selectors, the combining grapheme joiner),
+ * without marks at the start of a label, with ideographic and full-width dots as "." and
+ * backslashes as "/", in lower case. It never reaches an answer, so that "m²" stays "m²".
  */
 function detectionForm(word: string): string {
   return word
+    .replace(PERCENT_RUN, percentDecoded)
     .normalize("NFKC")
     .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "")
     .replace(/(?<=^|[.\u3002\uff0e\uff61])\p{M}+/gu, "")
     .replace(/[\u3002\uff0e\uff61]/g, ".")
     .replaceAll("\\", "/")
-    .toLowerCase()
-    .replace(/%(?:2e|2f|3a|3d|3f|23|40)/g, (code) => ENCODED[code] as string);
+    .toLowerCase();
 }
 
 /** A word without the punctuation around it, in its detection form. */
@@ -185,6 +186,12 @@ function hostVerdict(run: string, chars: string[], after: number, lastWord: numb
  */
 function linkVerdict(word: string): Verdict {
   const core = coreOf(word);
+  const verdict = coreVerdict(core);
+  // Any dropped word with the Meet host marks the field for its code: "https://meet.google.com".
+  return verdict === "drop" && core.includes("meet.google.com") ? "meet" : verdict;
+}
+
+function coreVerdict(core: string): Verdict {
   if (core === "") return "keep";
   if (core.startsWith("//") || SCHEME_SLASH.test(core) || QUERY.test(core)) return "drop";
   let lastRest = -1;
@@ -319,29 +326,46 @@ export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string 
   if (text === "") return "";
   const cut = text.length > maxLength;
   const parts = (cut ? text.slice(0, maxLength) : text).split(SPACES);
-  // The cut drops the word at the cut.
-  if (cut) parts[parts.length - 1] = "";
 
   const words: { text: string; space: string; drop: boolean }[] = [];
   for (let index = 0; index < parts.length; index += 2) {
     const word = parts[index] as string;
     if (word !== "") words.push({ text: word, space: parts[index - 1] ?? "", drop: false });
   }
-  let meet = false;
-  // Words joined by tabs and line breaks only: "https:\n//example.com\n/j/123".
+  // Words joined by tabs and line breaks only, which a URL parser joins: "https:\n//a.com\n/j/1".
+  const groups: { start: number; end: number }[] = [];
   for (let start = 0; start < words.length;) {
     let end = start + 1;
     while (end < words.length && URL_IGNORED.test((words[end] as { space: string }).space)) end++;
-    if (end - start > 1) {
-      const group = words.slice(start, end);
-      const verdict = linkVerdict(group.map((word) => word.text).join(""));
-      if (verdict !== "keep") for (const word of group) word.drop = true;
-      if (verdict === "meet") meet = true;
-    }
+    groups.push({ start, end });
     start = end;
   }
-  const pieces: Piece[] = [];
-  for (const word of words) {
+  const textOf = (group: { start: number; end: number }) =>
+    words
+      .slice(group.start, group.end)
+      .map((word) => word.text)
+      .join("");
+  const dropGroup = (group: { start: number; end: number }) => {
+    for (let index = group.start; index < group.end; index++) {
+      (words[index] as { drop: boolean }).drop = true;
+    }
+  };
+  // The cut drops the word at the cut, and every word that tabs and line breaks join to it: the
+  // rest of a link could follow. A cut right after a tab or line break joins the last word to the
+  // cut-off text the same way.
+  const lastGroup = groups.at(-1);
+  if (cut && lastGroup && (parts.at(-1) !== "" || URL_IGNORED.test(parts.at(-2) ?? ""))) {
+    dropGroup(lastGroup);
+  }
+  let meet = false;
+  for (const group of groups) {
+    if (group.end - group.start < 2) continue;
+    const verdict = linkVerdict(textOf(group));
+    if (verdict !== "keep") dropGroup(group);
+    if (verdict === "meet") meet = true;
+  }
+  const pieces: (Piece & { word: number })[] = [];
+  for (const [index, word] of words.entries()) {
     for (const [number, piece] of markdownPieces(word.text).entries()) {
       const verdict = word.drop ? "drop" : linkVerdict(piece);
       if (verdict === "meet") meet = true;
@@ -350,14 +374,19 @@ export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string 
         gap: number === 0 && word.space !== "",
         first: number === 0,
         drop: verdict !== "keep",
+        word: index,
       });
     }
   }
   // Once a Meet link went, so does every word of the field shaped like its code, also one that a
-  // separator or a word stands apart from: "meet.google.com - abc-defg-hij".
+  // separator or a word stands apart from ("meet.google.com - abc-defg-hij"), or that a line break
+  // splits ("abc\n-defg-hij").
   if (meet) {
-    for (const piece of pieces)
-      if (!piece.drop && MEET_CODE.test(coreOf(piece.text))) piece.drop = true;
+    for (const group of groups) if (MEET_CODE.test(coreOf(textOf(group)))) dropGroup(group);
+    for (const piece of pieces) {
+      if ((words[piece.word] as { drop: boolean }).drop) piece.drop = true;
+      else if (MEET_CODE.test(coreOf(piece.text))) piece.drop = true;
+    }
   }
 
   const kept: { gap: boolean; text: string }[] = [];
@@ -422,10 +451,13 @@ export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string 
     if (last.text !== "") break;
     kept.pop();
   }
-  // Every run of white space, also a single tab or line break, turns into one space.
+  // Every run of white space, also a single tab or line break, turns into one space. A label that
+  // lost its brackets can be empty ("[ Join](…)"), so runs are collapsed once more.
   const cleaned = kept
     .map((piece, index) => (index > 0 && piece.gap ? ` ${piece.text}` : piece.text))
-    .join("");
+    .join("")
+    .replace(/ {2,}/g, " ")
+    .trim();
   if (dropped && !WORD_CHAR.test(cleaned)) return null;
   return cut && cleaned !== "" ? `${cleaned}…` : cleaned;
 }

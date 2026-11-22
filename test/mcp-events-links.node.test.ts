@@ -41,6 +41,8 @@ describe("withoutLinks on long titles", () => {
     ["words joined by line breaks", "a\n".repeat(LENGTH / 2)],
     ["a link split by line breaks", `${"https:\n//a\n".repeat(LENGTH / 11)}y`],
     ["Meet codes after a Meet link", `meet.google.com ${"abc-defg-hij ".repeat(LENGTH / 13)}`],
+    ["percent-encoded bytes", "%41".repeat(Math.ceil(LENGTH / 3))],
+    ["invalid percent-encoded bytes", "%E3".repeat(Math.ceil(LENGTH / 3))],
     ["digits and dots", "1.1.1.".repeat(Math.ceil(LENGTH / 6))],
   ];
   for (const [label, text] of inputs) {
@@ -75,4 +77,21 @@ describe("withoutLinks on long titles", () => {
     expect(withoutLinks("x".repeat(MAX_TEXT_LENGTH))).toBe("x".repeat(MAX_TEXT_LENGTH));
     expect(withoutLinks("x".repeat(MAX_TEXT_LENGTH + 1))).toBeNull();
   });
+
+  // The cut word can be the end of a link that line breaks split, so its whole group goes.
+  const tail = "SECRET-123\n@zoom.us/j/1";
+  for (const [label, cutAt] of [
+    ["inside the host", tail.indexOf("@zoom") + 3],
+    ["right after the line break", tail.indexOf("\n") + 1],
+    ["right before the line break", tail.indexOf("\n")],
+  ] as const) {
+    it(`drops the words that line breaks join to the cut, with the cut ${label}`, () => {
+      const filler = "word ".repeat(Math.ceil(MAX_TEXT_LENGTH / 5));
+      const text = filler.slice(0, MAX_TEXT_LENGTH - cutAt) + tail;
+      expect(text.slice(MAX_TEXT_LENGTH - cutAt, MAX_TEXT_LENGTH)).toBe(tail.slice(0, cutAt));
+      const cleaned = withoutLinks(text) ?? "";
+      expect(cleaned).toMatch(/word…$/);
+      expect(cleaned).not.toMatch(/SECRE|zoom/);
+    });
+  }
 });
