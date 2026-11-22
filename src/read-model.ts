@@ -321,38 +321,59 @@ export interface EventSourceFilters {
 }
 
 /**
- * LIKE patterns for a filter, or null for no filter. SQLite folds the case of ASCII letters only,
- * so every other character matches any one character. The caller checks each row again with the
- * full case rules; the pattern only has to find every calendar the check accepts.
+ * Source calendars that the query for a filtered call reads at most. The filter in SQL only finds
+ * candidates; the exact check runs on these rows, and the limit of MAX_EVENT_CALENDARS after it.
+ */
+export const MAX_EVENT_CALENDAR_CANDIDATES = 200;
+
+/**
+ * LIKE patterns for a filter, or null for no filter. Each pattern finds every value that
+ * `filterMatches` accepts, and maybe more. SQLite folds the case of ASCII letters only, and lower
+ * case can change the length of a text ("İ" becomes "i" and a combining dot), so any other
+ * character matches any text, and "i" and "k" match any one character, as "İ" and the Kelvin sign
+ * turn into them.
  */
 function likePatterns(values: readonly string[] | undefined): string | null {
   if (!values || values.length === 0) return null;
   return JSON.stringify(
     values.map((value) =>
-      // Code points, as SQLite matches `_` against one character.
-      Array.from(value.trim())
+      Array.from(value.trim().toLowerCase())
         .map((char) => {
           if (char === "!" || char === "%" || char === "_") return `!${char}`;
-          return char.charCodeAt(0) < 0x80 ? char : "_";
+          if (char === "i" || char === "k") return "_";
+          return char.charCodeAt(0) < 0x80 ? char : "%";
         })
         .join(""),
     ),
   );
 }
 
+/** The exact rule of the `accounts` and `calendars` filters: equal after trim and lower case. */
+export function filterMatches(
+  filter: readonly string[] | undefined,
+  values: readonly string[],
+): boolean {
+  if (!filter || filter.length === 0) return true;
+  const wanted = new Set(filter.map((value) => value.trim().toLowerCase()));
+  return values.some((value) => wanted.has(value.toLowerCase()));
+}
+
 /**
  * The user's source calendars, the ones the editor reads, and the time zone of the user's first
  * account with working hours. Only calendars that the user turned on as sources are read: a
  * calendar shared with the account, but never chosen, stays out. The filters apply before the
- * limit, so that every calendar the filters name can be read; `truncated` says that more calendars
- * match than one call reads.
+ * limit, so that every calendar the filters name can be read. `truncated` says that more calendars
+ * match than one call reads, or that a filtered query reached MAX_EVENT_CALENDAR_CANDIDATES, so
+ * that some calendars stayed unchecked.
  */
 export async function readEventSources(
   db: D1Database,
   userId: string,
   filters: EventSourceFilters = {},
 ): Promise<{ sources: EventSource[]; truncated: boolean; workTimeZone: string | null }> {
-  const { results } = await db
+  const filtered = Boolean(filters.accounts?.length || filters.calendars?.length);
+  const limit = filtered ? MAX_EVENT_CALENDAR_CANDIDATES : MAX_EVENT_CALENDARS;
+  const { results: candidates } = await db
     .prepare(
       `SELECT c.id AS calendarId, c.name AS calendar, c.remote_id AS remoteId,
               a.id AS accountId, a.email, COALESCE(a.display_name, a.email) AS account,
@@ -365,13 +386,15 @@ export async function readEventSources(
               WHERE c.name LIKE f.value ESCAPE '!' OR c.id LIKE f.value ESCAPE '!'))
        ORDER BY a.created_at, a.id, c.name, c.id LIMIT ?4`,
     )
-    .bind(
-      userId,
-      likePatterns(filters.accounts),
-      likePatterns(filters.calendars),
-      MAX_EVENT_CALENDARS + 1,
-    )
+    .bind(userId, likePatterns(filters.accounts), likePatterns(filters.calendars), limit + 1)
     .all<Omit<EventSource, "needsReconnect"> & { needsReconnect: number }>();
+  const results = candidates
+    .slice(0, limit)
+    .filter(
+      (row) =>
+        filterMatches(filters.accounts, [row.accountId, row.email]) &&
+        filterMatches(filters.calendars, [row.calendar, row.calendarId]),
+    );
   // The zone does not depend on the filters, so that a date means the same day with and without.
   const { results: hours } = await db
     .prepare(
@@ -395,7 +418,7 @@ export async function readEventSources(
     }
   }
   return {
-    truncated: results.length > MAX_EVENT_CALENDARS,
+    truncated: results.length > MAX_EVENT_CALENDARS || candidates.length > limit,
     workTimeZone,
     sources: results.slice(0, MAX_EVENT_CALENDARS).map((row) => ({
       calendarId: row.calendarId,

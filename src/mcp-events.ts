@@ -45,85 +45,332 @@ const DATE_TIME =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|[+-](\d{2}):(\d{2}))$/i;
 
 /**
- * The rest of a link after its start. It stops at white space and quotes, and leaves closing
- * punctuation at its end, so that "(see https://…)" keeps its bracket.
+ * The longest title or location that `list_events` filters. Longer text is cut before the filter,
+ * which bounds its CPU time, and the cut word goes too: the rest of a link could follow it.
  */
-const REST = String.raw`(?:[^\s<>"]*[^\s<>"'.,;:!?)\]}])?`;
-/** A host name followed by a port, path, query or fragment. The top-level domain is ASCII. */
-const HOST = String.raw`(?:[\p{L}\p{N}-]+\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]+)`;
-/** No host starts inside a word, a host name or an email address. */
-const HOST_START = String.raw`(?<![\p{L}\p{N}@.-])`;
+export const MAX_TEXT_LENGTH = 2_000;
 
+/** White space between words. U+FEFF is missing on purpose: it hides inside a host name. */
+const SPACES = /([\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)/;
+/** Punctuation around a word, as in "(see https://…)" or "<https://…>". */
+const EDGE_OPEN = /[\p{Ps}\p{Pi}\p{Pf}<"'`*]/u;
+const EDGE_CLOSE = /[\p{Pe}\p{Pi}\p{Pf}>"'`*.,;:!?]/u;
 /**
- * Links in the order they are removed. A meeting link often holds its passcode, so no link leaves
- * in a title or location. The rules are generic, not a list of meeting services: a new service, a
- * regional host or an address without a scheme is a link all the same. Each rule starts with a
- * fixed text or at the start of a word, so that a long title takes linear time.
+ * Schemes without "//". A list, because "Re:Budget" looks like a scheme too. A scheme counts only
+ * if a digit, "@", "?", "/", "=" or "." follows it, so that "SMS:Kampagne" stays a word.
  */
-const LINKS = [
-  // Web schemes, also glued to a word, as in "Meetinghttps://…".
-  new RegExp(String.raw`(?:https?|ftps?|sftp|wss?):\/\/${REST}`, "giu"),
-  // Any other scheme with "//", such as zoommtg:// or webcal://.
-  new RegExp(String.raw`(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/${REST}`, "giu"),
-  // Schemes without "//". A list, because "Re:Budget" looks like a scheme too.
-  new RegExp(
-    String.raw`\b(?:mailto|tel|sips?|callto|skype|facetime(?:-audio)?|xmpp|sms|msteams):[^\s<>"]+`,
-    "giu",
-  ),
-  // Protocol-relative: "//host/path".
-  new RegExp(String.raw`(?<![\p{L}\p{N}])\/\/(?=[^\s/])${REST}`, "giu"),
-  new RegExp(String.raw`\bwww\.${REST}`, "giu"),
-  // A host without a scheme, followed by a port, path, query or fragment: "example.com/join?pwd=1".
-  new RegExp(String.raw`${HOST_START}${HOST}(?::\d{1,5})?[/?#]${REST}`, "giu"),
-  new RegExp(String.raw`(?<![\p{N}.])\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?[/?#]${REST}`, "giu"),
-  // A plain host name stays ("example.com" can name a venue), except a meeting service's.
-  new RegExp(
-    String.raw`${HOST_START}(?:[\p{L}\p{N}-]+\.)*(?:zoom\.us|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com|webex\.com|gotomeeting\.com|gotomeet\.me|whereby\.com|meet\.jit\.si|chime\.aws)\b`,
-    "giu",
-  ),
+const SCHEME =
+  /(?<!\p{L})(?:https?|ftps?|sftp|mailto|tel|sips?|callto|skype|facetime(?:-audio)?|xmpp|sms|msteams|zoommtg|zoomus|webex|data|javascript|vbscript|file):/gu;
+const SCHEME_REST = /[\d@?/=.]/;
+/** A query string or a passcode parameter, as in "?pwd=" or "confno=". */
+const QUERY = /(?:\?[\p{L}\p{N}_.-]+|pwd|passcode)=/u;
+const HOST_CHAR = /[\p{L}\p{M}\p{N}.-]/u;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const TOP_LEVEL = /^(?:\p{L}[\p{L}\p{M}]+|xn--[\p{L}\p{M}\p{N}-]+)$/u;
+const OCTET = /^\d{1,3}$/;
+const DIGIT = /^\d$/;
+/** Meeting services, whose host names go also without a path. Subdomains count too. */
+const MEETING_HOSTS = [
+  "zoom.us",
+  "zoomgov.com",
+  "teams.microsoft.com",
+  "teams.live.com",
+  "teams.cloud.microsoft",
+  "teams.microsoft.us",
+  "meet.google.com",
+  "webex.com",
+  "join.skype.com",
+  "meet.lync.com",
+  "bluejeans.com",
+  "facetime.apple.com",
+  "meetings.ringcentral.com",
+  "8x8.vc",
+  "whereby.com",
+  "gotomeeting.com",
+  "gotomeet.me",
+  "meet.jit.si",
+  "chime.aws",
 ];
+/** The code of a Google Meet call, as in "meet.google.com abc-defg-hij". */
+const MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+/** Characters that separate parts of a title, as in "Room 4 / floor 2". */
+const SEPARATORS = new Set(Array.from("\\,;:|/_·•–\u2014-"));
 
-/** Stands in for a removed link until the text around it is cleaned up. A private-use character. */
-const GAP = "\uE000";
-const SEPARATORS = String.raw`\s,;:|/\\_·•–\u2014-`;
+/** Percent-encoded characters of a link, as in "https%3A%2F%2Fexample.com". */
+const ENCODED: Record<string, string> = {
+  "%2e": ".",
+  "%2f": "/",
+  "%3a": ":",
+  "%3d": "=",
+  "%3f": "?",
+  "%23": "#",
+  "%40": "@",
+};
 
 /**
- * A title or location without links. Null if nothing but links and separators remains. The text is
- * NFKC-normalized first, so that "ｈｔｔｐｓ://" is a link too.
+ * The form of a word that the link rules read: NFKC, without invisible format characters, with
+ * ideographic and full-width dots as "." and backslashes as "/", in lower case, with the
+ * characters of a link decoded. It never reaches an answer, so that "m²" stays "m²".
  */
-export function withoutLinks(text: string): string | null {
-  if (text === "") return "";
-  let marked = text.normalize("NFKC").replaceAll(GAP, "");
-  for (const link of LINKS) marked = marked.replace(link, GAP);
-  // Short runs of white space keep the clean-up below linear.
-  marked = marked.replace(/\s{2,}/g, " ");
-  if (marked.includes(GAP)) {
-    // Brackets around a link: "<link>", "(link)", "[Join](link)". Nested ones need a few passes.
-    for (let pass = 0; pass < 3; pass++) {
-      marked = marked.replace(/[<([{]\s*\uE000\s*[>)\]}]/gu, GAP);
+function detectionForm(word: string): string {
+  return word
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\u3002\uff0e\uff61]/g, ".")
+    .replaceAll("\\", "/")
+    .toLowerCase()
+    .replace(/%(?:2e|2f|3a|3d|3f|23|40)/g, (code) => ENCODED[code] as string);
+}
+
+/** A word without the punctuation around it, in its detection form. */
+function coreOf(word: string): string {
+  const chars = Array.from(detectionForm(word));
+  let start = 0;
+  while (start < chars.length && EDGE_OPEN.test(chars[start] as string)) start++;
+  let end = chars.length;
+  while (end > start && EDGE_CLOSE.test(chars[end - 1] as string)) end--;
+  return chars.slice(start, end).join("");
+}
+
+type Verdict = "keep" | "drop" | "meet";
+
+/**
+ * What a run of host characters (letters, digits, "." and "-") means. `after` is the index of the
+ * character after the run, `lastWord` the index of the word's last letter or digit.
+ */
+function hostVerdict(run: string, chars: string[], after: number, lastWord: number): Verdict {
+  let end = run.length;
+  while (end > 0 && run[end - 1] === ".") end--;
+  const name = run.slice(0, end);
+  for (const host of MEETING_HOSTS) {
+    if (name === host || name.endsWith(`.${host}`)) {
+      return host === "meet.google.com" ? "meet" : "drop";
     }
-    marked = marked
-      .replace(/\[([^[\]\uE000\n]*)\]\uE000/gu, "$1")
-      // A link between two equal separators, as in "Room 4, <link>, floor 2".
-      .replace(/([,;|/·•–-])(?:\s*\uE000\s*\1)+/gu, "$1")
-      // A link at the edge of a bracket, as in "(see <link>)".
-      .replace(/\s*\uE000\s*(?=[)\]}>])/gu, "")
-      .replace(/(?<=[([{<])\s*\uE000\s*/gu, "")
-      // Separators that stood between the text and a link, such as "Room 4 / <link>".
-      .replace(new RegExp(String.raw`^[${SEPARATORS}]*(?:\uE000[${SEPARATORS}]*)+`, "u"), "")
-      .replace(
-        new RegExp(
-          String.raw`(?<![${SEPARATORS}])[${SEPARATORS}]*(?:\uE000[${SEPARATORS}]*)+$`,
-          "u",
-        ),
-        "",
-      )
-      .replaceAll(GAP, " ");
   }
-  const cleaned = marked
+  let next = after;
+  let port = false;
+  if (chars[next] === ":" && DIGIT.test(chars[next + 1] ?? "")) {
+    next++;
+    while (DIGIT.test(chars[next] ?? "")) next++;
+    port = true;
+  }
+  const follower = chars[next];
+  const path = (follower === "/" || follower === "?" || follower === "#") && lastWord > next;
+  const labels = name.split(".");
+  const count = labels.length;
+  if (count < 2) return "keep";
+  // A host anywhere in the word, followed by a path, query or fragment: "x@example.com/join?pwd=1".
+  if (path && labels[count - 2] !== "" && TOP_LEVEL.test(labels[count - 1] as string)) {
+    return "drop";
+  }
+  if ((path || port) && count >= 4 && labels.slice(-4).every((label) => OCTET.test(label))) {
+    return "drop";
+  }
+  return "keep";
+}
+
+/**
+ * Whether a word is or holds a link. Each test reads the word once or a fixed number of times, so
+ * that a long title takes linear time.
+ */
+function linkVerdict(word: string): Verdict {
+  const core = coreOf(word);
+  if (core === "") return "keep";
+  if (core.startsWith("//") || core.includes(":/") || core.includes("www.") || QUERY.test(core)) {
+    return "drop";
+  }
+  let lastRest = -1;
+  for (let i = core.length - 1; i >= 0; i--) {
+    if (SCHEME_REST.test(core[i] as string)) {
+      lastRest = i;
+      break;
+    }
+  }
+  for (const match of core.matchAll(SCHEME)) {
+    if (lastRest >= match.index + match[0].length) return "drop";
+  }
+  const chars = Array.from(core);
+  let lastWord = -1;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    if (WORD_CHAR.test(chars[i] as string)) {
+      lastWord = i;
+      break;
+    }
+  }
+  // Runs of host characters do not overlap, so this loop reads each character a fixed number of
+  // times.
+  let i = 0;
+  while (i < chars.length) {
+    if (!HOST_CHAR.test(chars[i] as string)) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < chars.length && HOST_CHAR.test(chars[j] as string)) j++;
+    const verdict = hostVerdict(chars.slice(i, j).join(""), chars, j, lastWord);
+    if (verdict !== "keep") return verdict;
+    i = j;
+  }
+  return "keep";
+}
+
+const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
+const CLOSERS: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<" };
+
+/**
+ * The brackets of a dropped word that belong to the text around it: "(see https://…)" keeps its
+ * ")", while "(https://…)" and "<https://…>" go as a whole.
+ */
+function strayBrackets(word: string): { open: string; close: string } {
+  const counts = new Map<string, number>();
+  for (const char of word) {
+    if (char in PAIRS) counts.set(char, (counts.get(char) ?? 0) + 1);
+    const opener = CLOSERS[char];
+    if (opener) counts.set(opener, (counts.get(opener) ?? 0) - 1);
+  }
+  let open = "";
+  for (const char of word) {
+    if (!(char in PAIRS)) break;
+    const balance = counts.get(char) ?? 0;
+    if (balance > 0) {
+      open += char;
+      counts.set(char, balance - 1);
+    }
+  }
+  let close = "";
+  const chars = Array.from(word);
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const char = chars[i] as string;
+    const opener = CLOSERS[char];
+    if (!opener) {
+      if (EDGE_CLOSE.test(char)) continue;
+      break;
+    }
+    const balance = counts.get(opener) ?? 0;
+    if (balance < 0) {
+      close = char + close;
+      counts.set(opener, balance + 1);
+    }
+  }
+  return { open, close };
+}
+
+function isSeparators(text: string): boolean {
+  for (const char of text) if (!SEPARATORS.has(char)) return false;
+  return true;
+}
+
+/** Every separator is one UTF-16 unit, so this reads only the separators at the end. */
+function withoutTrailingSeparators(text: string): string {
+  let end = text.length;
+  while (end > 0 && SEPARATORS.has(text[end - 1] as string)) end--;
+  return text.slice(0, end);
+}
+
+/** A word split before each Markdown link target: "[Join](https://…)" gives "[Join]", "(https://…)". */
+function markdownPieces(word: string): string[] {
+  if (!word.includes("](")) return [word];
+  const pieces = word.split("](");
+  return pieces.map((piece, index) =>
+    index === 0 ? `${piece}]` : index === pieces.length - 1 ? `(${piece}` : `(${piece}]`,
+  );
+}
+
+/** How many kept words back the "[" of a Markdown link label may stand. */
+const LABEL_WORDS = 8;
+
+/**
+ * A title or location without links. Null if links were removed and no letter or digit remains.
+ *
+ * The text is split into words at white space, and a word that is or holds a link goes as a
+ * whole: a meeting link often holds its passcode, so no part of it may leave. The rules are
+ * generic, not a list of meeting services: a new service, a regional host or an address without a
+ * scheme is a link all the same. The price is that a word shaped like a host and a path, such as
+ * "Node.js/React", goes too. Kept words keep their characters; the rules read a normalized copy.
+ * Only tests pass `maxLength`, to show that the filter takes linear time also without the cut.
+ */
+export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string | null {
+  if (text === "") return "";
+  const cut = text.length > maxLength;
+  const parts = (cut ? text.slice(0, maxLength) : text).split(SPACES);
+  if (cut) parts[parts.length - 1] = "";
+
+  const kept: { space: string; text: string }[] = [];
+  // The cut drops the word at the cut.
+  let dropped = cut;
+  // While words are dropped: the white space before the first of them, and the opening brackets
+  // that wait for the next kept word.
+  let afterDrop = false;
+  let spaceBefore = "";
+  let opens = "";
+  let meet = false;
+  for (let index = 0; index < parts.length; index += 2) {
+    const word = parts[index] as string;
+    if (word === "") continue;
+    const pieces = markdownPieces(word);
+    let previousKept = false;
+    for (const [number, piece] of pieces.entries()) {
+      const space = number === 0 ? (parts[index - 1] ?? "") : "";
+      let verdict = linkVerdict(piece);
+      if (verdict === "keep" && meet && MEET_CODE.test(coreOf(piece))) verdict = "drop";
+      meet = verdict === "meet";
+      if (verdict !== "keep") {
+        if (!afterDrop) spaceBefore = space;
+        afterDrop = true;
+        dropped = true;
+        const last = kept.at(-1);
+        // "[Join](https://…)" keeps "Join".
+        if (number > 0 && previousKept && last?.text.endsWith("]")) {
+          last.text = last.text.slice(0, -1);
+          for (let back = kept.length - 1; back >= Math.max(0, kept.length - LABEL_WORDS); back--) {
+            const label = kept[back] as { text: string };
+            if (label.text.startsWith("[")) {
+              label.text = label.text.slice(1);
+              break;
+            }
+          }
+        }
+        const stray = strayBrackets(piece);
+        for (const bracket of stray.close) {
+          if (opens.endsWith(CLOSERS[bracket] as string)) opens = opens.slice(0, -1);
+          else if (last) last.text = withoutTrailingSeparators(last.text) + bracket;
+        }
+        opens += stray.open;
+        previousKept = false;
+        continue;
+      }
+      previousKept = true;
+      if (!afterDrop) {
+        kept.push({ space, text: piece });
+        continue;
+      }
+      // A separator between the text and a link goes with the link: "Room 4 / <link> / floor 2".
+      const last = kept.at(-1);
+      if (
+        isSeparators(piece) &&
+        (!last || isSeparators(last.text) || SEPARATORS.has(last.text.at(-1) ?? ""))
+      ) {
+        continue;
+      }
+      kept.push({ space: spaceBefore || space, text: opens + piece });
+      opens = "";
+      afterDrop = false;
+    }
+  }
+  // Separators that stood before a link at the end: "Agenda: <link>".
+  while (afterDrop && kept.length > 0) {
+    const last = kept.at(-1) as { text: string };
+    last.text = withoutTrailingSeparators(last.text);
+    if (last.text !== "") break;
+    kept.pop();
+  }
+  const cleaned = kept
+    .map((piece) => piece.space + piece.text)
+    .join("")
     .replace(/\s{2,}/g, " ")
-    .replace(/^[\s,;|/–-]+|(?<![\s,;|/–-])[\s,;|/–-]+$/g, "");
-  return /[\p{L}\p{N}]/u.test(cleaned) ? cleaned : null;
+    .trim();
+  if (dropped && !WORD_CHAR.test(cleaned)) return null;
+  return cut && cleaned !== "" ? `${cleaned}…` : cleaned;
 }
 
 /**
@@ -339,12 +586,6 @@ async function readCalendar(
   }
 }
 
-function matches(filter: readonly string[] | undefined, values: readonly string[]): boolean {
-  if (!filter || filter.length === 0) return true;
-  const wanted = new Set(filter.map((value) => value.trim().toLowerCase()));
-  return values.some((value) => wanted.has(value.toLowerCase()));
-}
-
 /** The view of one event under the account's detail level. */
 function viewOf(
   event: SourceEvent,
@@ -401,15 +642,9 @@ export async function listEvents(
   const window = windowOf(input, zone, now);
   if ("problem" in window) return window;
 
-  // The query found every calendar that the filters may name; this applies their exact case rules.
-  const chosen = sources.filter(
-    (source) =>
-      matches(input.accounts, [source.accountId, source.email]) &&
-      matches(input.calendars, [source.calendar, source.calendarId]),
-  );
   const range = { start: new Date(window.start), end: new Date(window.end) };
   // Instances of different accounts read in parallel; each instance queues its own calls.
-  const reads = await Promise.all(chosen.map((source) => readCalendar(env, source, range)));
+  const reads = await Promise.all(sources.map((source) => readCalendar(env, source, range)));
 
   // The agent counts as outside the org: an org account's events show at most what a rule from
   // it to an external account may copy.

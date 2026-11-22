@@ -21,7 +21,11 @@ import {
   type FakeEvent,
   type FakeWireFields,
 } from "../src/providers/fake-calendar";
-import { eventsAnswer, MAX_EVENT_CALENDARS } from "../src/read-model";
+import {
+  eventsAnswer,
+  MAX_EVENT_CALENDAR_CANDIDATES,
+  MAX_EVENT_CALENDARS,
+} from "../src/read-model";
 import { BASE, EMPTY_FAKE_SEED, noFakeNetwork, signIn, stopClock } from "./helpers";
 
 const DAY = 86_400_000;
@@ -491,7 +495,7 @@ describe("events", () => {
     const answer = await listEvents(token, { start: START });
     expect(answer.events.map((item) => [item.title, item.location])).toEqual([
       ["Weekly", "Join"],
-      ["Meeting", "Room 4.2"],
+      [null, "Room 4.2"],
     ]);
     expect(JSON.stringify(answer)).not.toMatch(/SECRET|zoom|microsoft|https?:/i);
   });
@@ -661,6 +665,59 @@ describe("failures and limits", () => {
     const none = await listEvents(token, { start: START, calendars: ["Extra_0%"] });
     expect(none).toMatchObject({ events: [], errors: [], calendarsTruncated: false });
   });
+
+  it("finds the calendar a filter names behind calendars that only its SQL pattern matches", async () => {
+    const { token, userId } = await user();
+    await account(userId, "near-a");
+    // Every name matches the SQL pattern of "Späte Übung", in which "ä" and "Ü" stand for any
+    // text, and sorts before the calendar the filter names.
+    const letters = "abcdefghijklmnopqrstuvwxyz0123";
+    await env.DB.batch(
+      Array.from(letters, (letter, i) =>
+        env.DB.prepare(
+          `INSERT INTO calendars (id, account_id, remote_id, name, is_source)
+           VALUES (?, 'near-a', ?, ?, 1)`,
+        ).bind(`near-a-${i}`, `remote-${i}`, `Sp${letter}te Übung`),
+      ),
+    );
+    const late = await account(userId, "near-z", { calendar: "Späte Übung" });
+    await late.addFakeEvent(event("late", 9, { subject: "Exact match" }));
+    const answer = await listEvents(token, { start: START, calendars: ["SPÄTE ÜBUNG"] });
+    expect(answer.events.map((item) => item.title)).toEqual(["Exact match"]);
+    expect(answer.calendarsTruncated).toBe(false);
+  });
+
+  it("says that calendars stayed unchecked when the SQL pattern finds too many candidates", async () => {
+    const { token, userId } = await user();
+    await account(userId, "wide-a");
+    await env.DB.batch(
+      Array.from({ length: MAX_EVENT_CALENDAR_CANDIDATES }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO calendars (id, account_id, remote_id, name, is_source)
+           VALUES (?, 'wide-a', ?, ?, 1)`,
+        ).bind(`wide-a-${i}`, `remote-${i}`, `W${String(i).padStart(3, "0")}de`),
+      ),
+    );
+    const late = await account(userId, "wide-z", { calendar: "Wïde" });
+    await late.addFakeEvent(event("late", 9, { subject: "Behind the candidates" }));
+    const answer = await listEvents(token, { start: START, calendars: ["wïde"] });
+    expect(answer.events).toEqual([]);
+    expect(answer.calendarsTruncated).toBe(true);
+  });
+
+  it("finds a calendar whose name changes its length in lower case", async () => {
+    const { token, userId } = await user();
+    // "İ" turns into "i" and a combining dot, the Kelvin sign into "k".
+    const first = await account(userId, "case-a", { calendar: "İstanbul" });
+    await first.addFakeEvent(event("dotted", 9, { subject: "Dotted I" }));
+    const second = await account(userId, "case-b", { calendar: "\u212Aitchen" });
+    await second.addFakeEvent(event("kelvin", 10, { subject: "Kelvin sign" }));
+    // The filter has one character more than the name.
+    const dotted = await listEvents(token, { start: START, calendars: ["i\u0307stanbul"] });
+    expect(dotted.events.map((item) => item.title)).toEqual(["Dotted I"]);
+    const kelvin = await listEvents(token, { start: START, calendars: ["kitchen"] });
+    expect(kelvin.events.map((item) => item.title)).toEqual(["Kelvin sign"]);
+  });
 });
 
 describe("withoutLinks", () => {
@@ -677,37 +734,70 @@ describe("withoutLinks", () => {
     ["Party example.com/join?pwd=SECRET", "Party"],
     ["Host example.com:8443/SECRET", "Host"],
     ["Host 10.0.0.1:8443/join?SECRET", "Host"],
+    ["Host 10.0.0.1:8443", "Host"],
     ["Room 2 //example.com/x?pwd=SECRET", "Room 2"],
-    ["Meetinghttps://example.com/x?token=SECRET", "Meeting"],
-    ["Room_https://example.com/SECRET", "Room"],
     ["Sync ｈｔｔｐｓ://ｚｏｏｍ.ｕｓ/ｊ/１２３?pwd=SECRET", "Sync"],
     ["Files ftp://example.com/SECRET", "Files"],
     ["Ask mailto:SECRET@example.com", "Ask"],
     ["Dial tel:+43SECRET", "Dial"],
+    ["Dial:tel:+431234SECRET", null],
     ["Open zoommtg://zoom.us/join?confno=SECRET", "Open"],
     ["Teams msteams:/l/meetup-join/SECRET", "Teams"],
     ["Sync www.example.com", "Sync"],
+    // A dot, an ellipsis or an address before the host does not hide it.
+    ["Call…zoom.us/j/123?pwd=SECRET", null],
+    ["Call...example.com/j/1?pwd=SECRET", null],
+    ["x@zoom.us/j/123?pwd=SECRET", null],
+    ["Join zoom.us./j/123?pwd=SECRET", "Join"],
+    // Other dots, scripts, slashes and invisible characters.
+    ["Join zoom。us/j/1SECRET", "Join"],
+    ["Join example｡com/SECRET", "Join"],
+    ["Join example．com/SECRET", "Join"],
+    ["Join пример.рф/join?pwd=SECRET", "Join"],
+    ["Join 例子.中国/SECRET", "Join"],
+    ["Join https:\\\\zoom.us\\j\\123?pwd=SECRET", "Join"],
+    ["Join example.com\\SECRET", "Join"],
+    ["Join https%3A%2F%2Fexample.com%2Fj%2FSECRET", "Join"],
+    ["Join example.com%2Fj%2FSECRET", "Join"],
+    ["Join zoom\u200b.us/j/1SECRET", "Join"],
+    ["Join zoom\u200d.us/j/1SECRET", "Join"],
+    ["Join zoom\u2060.us/j/1SECRET", "Join"],
+    ["Join zoom\ufeff.us/j/1SECRET", "Join"],
+    // The code of a Meet call goes with the host before it.
+    ["Join meet.google.com abc-defg-hij", "Join"],
+    ["Join zoommtg:join?confno=SECRET", "Join"],
+    ["Open data:text/html,SECRET", "Open"],
+    ["Run javascript:alert(1)SECRET", "Run"],
+    ["Call skype:SECRET?call", "Call"],
+    ["Text sms:+43SECRET", "Text"],
+    // A word that holds a link goes as a whole: no part of it is known to be safe.
+    ["Meetinghttps://example.com/x?token=SECRET", null],
+    ["Room_https://example.com/SECRET", null],
     // What stood around a link goes with it.
     ["[Join](https://zoom.us/j/1?pwd=SECRET)", "Join"],
+    ["[Join the call](https://zoom.us/j/1?pwd=SECRET) now", "Join the call now"],
     ["Call <https://example.com/SECRET>", "Call"],
     ["(see https://example.com/SECRET)", "(see)"],
+    ["(https://example.com/SECRET see)", "(see)"],
     ["Room 4, https://example.com/SECRET, floor 2", "Room 4, floor 2"],
     ["Room 4 / https://example.com/SECRET / floor 2", "Room 4 / floor 2"],
+    ["https://example.com/SECRET - Room 4", "Room 4"],
     ["Agenda: https://example.com/SECRET", "Agenda"],
     ["zoom.usx/j/SECRET", null],
     ["Sync meet.google.com.evil/SECRET", "Sync"],
     // A meeting service's host goes also without a path.
     ["Call on zoom.us", "Call on"],
+    ["Call on teams.microsoft.com.", "Call on"],
   ];
   for (const [text, expected] of removed) {
-    it(`removes the link from "${text}"`, () => {
+    it(`removes the link from ${JSON.stringify(text)}`, () => {
       const cleaned = withoutLinks(text);
       expect(cleaned).toBe(expected);
-      expect(cleaned ?? "").not.toMatch(/SECRET|\/\/|[[(<]$/);
+      expect(cleaned ?? "").not.toMatch(/SECRE|\/\/|[[(<]$/);
     });
   }
 
-  // Text that only looks like part of a link stays as it is.
+  // Text that only looks like part of a link stays as it is, also its characters.
   const kept = [
     "Room 4.2",
     "Release v1.5",
@@ -719,10 +809,34 @@ describe("withoutLinks", () => {
     "Lunch (Café Central)",
     // A plain host without a path can name a venue, and holds no meeting ID or passcode.
     "Party at example.com",
+    // Nothing follows the "?": a file name in a question.
+    "Did you see report.pdf?",
+    "Who owns config.yaml?",
+    // A scheme of the list counts only with a digit, "@", "?", "/", "=" or "." after it.
+    "SMS:Kampagne review",
+    "Skype:Call with Max",
+    "Hotel:5 stars",
+    // The rules read a normalized copy; the answer keeps the original characters.
+    "Büro 25 m²",
+    "ｆｕｌｌ ｗｉｄｔｈ",
+    "🎉",
   ];
   for (const text of kept) {
-    it(`keeps "${text}"`, () => {
+    it(`keeps ${JSON.stringify(text)}`, () => {
       expect(withoutLinks(text)).toBe(text);
+    });
+  }
+
+  // The price of dropping whole words: a word shaped like a host and a path goes, and so does a
+  // word that starts with "//". Neither holds a link, but the rules cannot tell.
+  const lost: [string, string | null][] = [
+    ["Node.js/React workshop", "workshop"],
+    ["Dr.Smith/Jones", null],
+    ["Sync //TODO", "Sync"],
+  ];
+  for (const [text, expected] of lost) {
+    it(`drops the link-shaped word in ${JSON.stringify(text)}`, () => {
+      expect(withoutLinks(text)).toBe(expected);
     });
   }
 

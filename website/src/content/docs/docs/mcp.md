@@ -117,13 +117,17 @@ What the tool leaves out:
   `includeMirrors` to see them, with `mirror: true`.
 - **Bodies, attendees and online meeting links** never leave. The same meeting in two accounts shows
   twice: the accounts share no ID that would identify it safely.
+- **Links in a title or location** go, with the whole word that holds them, because a meeting link
+  often holds its passcode. A word shaped like a host and a path, such as `Node.js/React`, goes
+  too. A title or location longer than 2,000 characters is cut, and ends in `…`.
 - **Calendars that are no source calendar** are not read. Turn a calendar on as a source in the
   editor to include it.
 
 A calendar that cannot be read stands in `errors` with a code: `reconnect`, `throttled` (with
 `retryAfterSeconds`), `gone` or `failed`. The events of the other calendars are still complete. One
 call reads up to 25 calendars and returns up to 500 events; `calendarsTruncated` and `truncated` say
-when more exist.
+when more exist. With `accounts` or `calendars`, the limit of 25 counts only the calendars that
+match, and `calendarsTruncated` is also set if more than 200 calendars had to be checked.
 
 The tool reads through the same queue as the sync, one provider call per account at a time. While a
 provider throttles an account, the tool makes no call for it and reports `throttled`, so that an
