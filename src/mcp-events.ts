@@ -51,7 +51,7 @@ const DATE_TIME =
 export const MAX_TEXT_LENGTH = 2_000;
 
 /** White space between words. U+FEFF is missing on purpose: it hides inside a host name. */
-const SPACES = /([\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)/;
+const SPACES = /([\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)/;
 /** Punctuation around a word, as in "(see https://…)" or "<https://…>". */
 const EDGE_OPEN = /[\p{Ps}\p{Pi}\p{Pf}<"'`*]/u;
 const EDGE_CLOSE = /[\p{Pe}\p{Pi}\p{Pf}>"'`*.,;:!?]/u;
@@ -62,6 +62,8 @@ const EDGE_CLOSE = /[\p{Pe}\p{Pi}\p{Pf}>"'`*.,;:!?]/u;
 const SCHEME =
   /(?<!\p{L})(?:https?|ftps?|sftp|mailto|tel|sips?|callto|skype|facetime(?:-audio)?|xmpp|sms|msteams|zoommtg|zoomus|webex|data|javascript|vbscript|file):/gu;
 const SCHEME_REST = /[\d@?/=.]/;
+/** "://" or ":/" before a letter or digit, as in "msteams:/l/…". The emoticon ":/" stays. */
+const SCHEME_SLASH = /:\/[\p{L}\p{N}/]/u;
 /** A query string or a passcode parameter, as in "?pwd=" or "confno=". */
 const QUERY = /(?:\?[\p{L}\p{N}_.-]+|pwd|passcode)=/u;
 const HOST_CHAR = /[\p{L}\p{M}\p{N}.-]/u;
@@ -108,14 +110,16 @@ const ENCODED: Record<string, string> = {
 };
 
 /**
- * The form of a word that the link rules read: NFKC, without invisible format characters, with
- * ideographic and full-width dots as "." and backslashes as "/", in lower case, with the
- * characters of a link decoded. It never reaches an answer, so that "m²" stays "m²".
+ * The form of a word that the link rules read: NFKC, without format characters and the characters
+ * that IDNA ignores (variation selectors, the combining grapheme joiner), without marks at the start
+ * of a label, with ideographic and full-width dots as "." and backslashes as "/", in lower case,
+ * with the characters of a link decoded. It never reaches an answer, so that "m²" stays "m²".
  */
 function detectionForm(word: string): string {
   return word
     .normalize("NFKC")
-    .replace(/\p{Cf}/gu, "")
+    .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "")
+    .replace(/(?<=^|[.\u3002\uff0e\uff61])\p{M}+/gu, "")
     .replace(/[\u3002\uff0e\uff61]/g, ".")
     .replaceAll("\\", "/")
     .toLowerCase()
@@ -159,10 +163,16 @@ function hostVerdict(run: string, chars: string[], after: number, lastWord: numb
   const labels = name.split(".");
   const count = labels.length;
   if (count < 2) return "keep";
-  // A host anywhere in the word, followed by a path, query or fragment: "x@example.com/join?pwd=1".
-  if (path && labels[count - 2] !== "" && TOP_LEVEL.test(labels[count - 1] as string)) {
-    return "drop";
+  const topLevel = labels[count - 2] !== "" && TOP_LEVEL.test(labels[count - 1] as string);
+  // "www." before a host name with a top-level domain, also without a path: "www.example.com".
+  // "WWW.Kongress" names no host.
+  if (topLevel) {
+    for (let index = 0; index < count - 2; index++) {
+      if ((labels[index] as string).endsWith("www")) return "drop";
+    }
   }
+  // A host anywhere in the word, followed by a path, query or fragment: "x@example.com/join?pwd=1".
+  if (path && topLevel) return "drop";
   if ((path || port) && count >= 4 && labels.slice(-4).every((label) => OCTET.test(label))) {
     return "drop";
   }
@@ -176,9 +186,7 @@ function hostVerdict(run: string, chars: string[], after: number, lastWord: numb
 function linkVerdict(word: string): Verdict {
   const core = coreOf(word);
   if (core === "") return "keep";
-  if (core.startsWith("//") || core.includes(":/") || core.includes("www.") || QUERY.test(core)) {
-    return "drop";
-  }
+  if (core.startsWith("//") || SCHEME_SLASH.test(core) || QUERY.test(core)) return "drop";
   let lastRest = -1;
   for (let i = core.length - 1; i >= 0; i--) {
     if (SCHEME_REST.test(core[i] as string)) {
@@ -219,25 +227,26 @@ const CLOSERS: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<"
 
 /**
  * The brackets of a dropped word that belong to the text around it: "(see https://…)" keeps its
- * ")", while "(https://…)" and "<https://…>" go as a whole.
+ * ")", while "(https://…)" and "<https://…>" go as a whole. Openers in the order they stand,
+ * closers in the order they stand.
  */
-function strayBrackets(word: string): { open: string; close: string } {
+function strayBrackets(word: string): { open: string[]; close: string[] } {
   const counts = new Map<string, number>();
   for (const char of word) {
     if (char in PAIRS) counts.set(char, (counts.get(char) ?? 0) + 1);
     const opener = CLOSERS[char];
     if (opener) counts.set(opener, (counts.get(opener) ?? 0) - 1);
   }
-  let open = "";
+  const open: string[] = [];
   for (const char of word) {
     if (!(char in PAIRS)) break;
     const balance = counts.get(char) ?? 0;
     if (balance > 0) {
-      open += char;
+      open.push(char);
       counts.set(char, balance - 1);
     }
   }
-  let close = "";
+  const close: string[] = [];
   const chars = Array.from(word);
   for (let i = chars.length - 1; i >= 0; i--) {
     const char = chars[i] as string;
@@ -248,11 +257,11 @@ function strayBrackets(word: string): { open: string; close: string } {
     }
     const balance = counts.get(opener) ?? 0;
     if (balance < 0) {
-      close = char + close;
+      close.push(char);
       counts.set(opener, balance + 1);
     }
   }
-  return { open, close };
+  return { open, close: close.reverse() };
 }
 
 function isSeparators(text: string): boolean {
@@ -267,7 +276,10 @@ function withoutTrailingSeparators(text: string): string {
   return text.slice(0, end);
 }
 
-/** A word split before each Markdown link target: "[Join](https://…)" gives "[Join]", "(https://…)". */
+/**
+ * A word split before each Markdown link target: "[Join](https://…)" gives "[Join]" and
+ * "(https://…)", "![img](https://…)" gives "![img]" and "(https://…)".
+ */
 function markdownPieces(word: string): string[] {
   if (!word.includes("](")) return [word];
   const pieces = word.split("](");
@@ -278,6 +290,18 @@ function markdownPieces(word: string): string[] {
 
 /** How many kept words back the "[" of a Markdown link label may stand. */
 const LABEL_WORDS = 8;
+/** White space that a URL parser removes, so that it joins the words around it into one link. */
+const URL_IGNORED = /^[\t\n\r]+$/;
+
+/** A piece of a word, with what the link rules decided about it. */
+interface Piece {
+  text: string;
+  /** White space stood before it. */
+  gap: boolean;
+  /** The first piece of its word. */
+  first: boolean;
+  drop: boolean;
+}
 
 /**
  * A title or location without links. Null if links were removed and no letter or digit remains.
@@ -287,75 +311,109 @@ const LABEL_WORDS = 8;
  * generic, not a list of meeting services: a new service, a regional host or an address without a
  * scheme is a link all the same. The price is that a word shaped like a host and a path, such as
  * "Node.js/React", goes too. Kept words keep their characters; the rules read a normalized copy.
+ * Words that only tabs and line breaks separate are also read as one, because a URL parser drops
+ * those characters: if they form a link together, all of them go.
  * Only tests pass `maxLength`, to show that the filter takes linear time also without the cut.
  */
 export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string | null {
   if (text === "") return "";
   const cut = text.length > maxLength;
   const parts = (cut ? text.slice(0, maxLength) : text).split(SPACES);
+  // The cut drops the word at the cut.
   if (cut) parts[parts.length - 1] = "";
 
-  const kept: { space: string; text: string }[] = [];
-  // The cut drops the word at the cut.
-  let dropped = cut;
-  // While words are dropped: the white space before the first of them, and the opening brackets
-  // that wait for the next kept word.
-  let afterDrop = false;
-  let spaceBefore = "";
-  let opens = "";
-  let meet = false;
+  const words: { text: string; space: string; drop: boolean }[] = [];
   for (let index = 0; index < parts.length; index += 2) {
     const word = parts[index] as string;
-    if (word === "") continue;
-    const pieces = markdownPieces(word);
-    let previousKept = false;
-    for (const [number, piece] of pieces.entries()) {
-      const space = number === 0 ? (parts[index - 1] ?? "") : "";
-      let verdict = linkVerdict(piece);
-      if (verdict === "keep" && meet && MEET_CODE.test(coreOf(piece))) verdict = "drop";
-      meet = verdict === "meet";
-      if (verdict !== "keep") {
-        if (!afterDrop) spaceBefore = space;
-        afterDrop = true;
-        dropped = true;
-        const last = kept.at(-1);
-        // "[Join](https://…)" keeps "Join".
-        if (number > 0 && previousKept && last?.text.endsWith("]")) {
-          last.text = last.text.slice(0, -1);
-          for (let back = kept.length - 1; back >= Math.max(0, kept.length - LABEL_WORDS); back--) {
-            const label = kept[back] as { text: string };
-            if (label.text.startsWith("[")) {
-              label.text = label.text.slice(1);
-              break;
-            }
+    if (word !== "") words.push({ text: word, space: parts[index - 1] ?? "", drop: false });
+  }
+  let meet = false;
+  // Words joined by tabs and line breaks only: "https:\n//example.com\n/j/123".
+  for (let start = 0; start < words.length;) {
+    let end = start + 1;
+    while (end < words.length && URL_IGNORED.test((words[end] as { space: string }).space)) end++;
+    if (end - start > 1) {
+      const group = words.slice(start, end);
+      const verdict = linkVerdict(group.map((word) => word.text).join(""));
+      if (verdict !== "keep") for (const word of group) word.drop = true;
+      if (verdict === "meet") meet = true;
+    }
+    start = end;
+  }
+  const pieces: Piece[] = [];
+  for (const word of words) {
+    for (const [number, piece] of markdownPieces(word.text).entries()) {
+      const verdict = word.drop ? "drop" : linkVerdict(piece);
+      if (verdict === "meet") meet = true;
+      pieces.push({
+        text: piece,
+        gap: number === 0 && word.space !== "",
+        first: number === 0,
+        drop: verdict !== "keep",
+      });
+    }
+  }
+  // Once a Meet link went, so does every word of the field shaped like its code, also one that a
+  // separator or a word stands apart from: "meet.google.com - abc-defg-hij".
+  if (meet) {
+    for (const piece of pieces)
+      if (!piece.drop && MEET_CODE.test(coreOf(piece.text))) piece.drop = true;
+  }
+
+  const kept: { gap: boolean; text: string }[] = [];
+  let dropped = cut;
+  // While pieces are dropped: whether white space stood before the first of them, and the opening
+  // brackets that wait for the next kept piece.
+  let afterDrop = false;
+  let gapBefore = false;
+  const opens: string[] = [];
+  let previousKept = false;
+  for (const piece of pieces) {
+    if (piece.drop) {
+      if (!afterDrop) gapBefore = piece.gap;
+      afterDrop = true;
+      dropped = true;
+      const last = kept.at(-1);
+      // "[Join](https://…)" keeps "Join", "![img](https://…)" keeps "img".
+      if (!piece.first && previousKept && last?.text.endsWith("]")) {
+        last.text = last.text.slice(0, -1);
+        for (let back = kept.length - 1; back >= Math.max(0, kept.length - LABEL_WORDS); back--) {
+          const label = kept[back] as { text: string };
+          const open = label.text.startsWith("![") ? 2 : label.text.startsWith("[") ? 1 : 0;
+          if (open > 0) {
+            label.text = label.text.slice(open);
+            break;
           }
         }
-        const stray = strayBrackets(piece);
-        for (const bracket of stray.close) {
-          if (opens.endsWith(CLOSERS[bracket] as string)) opens = opens.slice(0, -1);
-          else if (last) last.text = withoutTrailingSeparators(last.text) + bracket;
-        }
-        opens += stray.open;
-        previousKept = false;
-        continue;
       }
-      previousKept = true;
-      if (!afterDrop) {
-        kept.push({ space, text: piece });
-        continue;
+      const stray = strayBrackets(piece.text);
+      // Closers are collected and appended once, so that many of them take linear time.
+      let closers = "";
+      for (const bracket of stray.close) {
+        if (opens.at(-1) === CLOSERS[bracket]) opens.pop();
+        else closers += bracket;
       }
-      // A separator between the text and a link goes with the link: "Room 4 / <link> / floor 2".
-      const last = kept.at(-1);
-      if (
-        isSeparators(piece) &&
-        (!last || isSeparators(last.text) || SEPARATORS.has(last.text.at(-1) ?? ""))
-      ) {
-        continue;
-      }
-      kept.push({ space: spaceBefore || space, text: opens + piece });
-      opens = "";
-      afterDrop = false;
+      if (last && closers !== "") last.text = withoutTrailingSeparators(last.text) + closers;
+      for (const bracket of stray.open) opens.push(bracket);
+      previousKept = false;
+      continue;
     }
+    previousKept = true;
+    if (!afterDrop) {
+      kept.push({ gap: piece.gap, text: piece.text });
+      continue;
+    }
+    // A separator between the text and a link goes with the link: "Room 4 / <link> / floor 2".
+    const last = kept.at(-1);
+    if (
+      isSeparators(piece.text) &&
+      (!last || isSeparators(last.text) || SEPARATORS.has(last.text.at(-1) ?? ""))
+    ) {
+      continue;
+    }
+    kept.push({ gap: gapBefore || piece.gap, text: opens.join("") + piece.text });
+    opens.length = 0;
+    afterDrop = false;
   }
   // Separators that stood before a link at the end: "Agenda: <link>".
   while (afterDrop && kept.length > 0) {
@@ -364,11 +422,10 @@ export function withoutLinks(text: string, maxLength = MAX_TEXT_LENGTH): string 
     if (last.text !== "") break;
     kept.pop();
   }
+  // Every run of white space, also a single tab or line break, turns into one space.
   const cleaned = kept
-    .map((piece) => piece.space + piece.text)
-    .join("")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+    .map((piece, index) => (index > 0 && piece.gap ? ` ${piece.text}` : piece.text))
+    .join("");
   if (dropped && !WORD_CHAR.test(cleaned)) return null;
   return cut && cleaned !== "" ? `${cleaned}…` : cleaned;
 }

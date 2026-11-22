@@ -763,8 +763,23 @@ describe("withoutLinks", () => {
     ["Join zoom\u200d.us/j/1SECRET", "Join"],
     ["Join zoom\u2060.us/j/1SECRET", "Join"],
     ["Join zoom\ufeff.us/j/1SECRET", "Join"],
-    // The code of a Meet call goes with the host before it.
+    // Characters that IDNA ignores, and a mark at the start of a label.
+    ["Join zoom.\ufe0fus/j/123?x", "Join"],
+    ["Join us02web.zoom.\u034fus/j/1234567890", "Join"],
+    ["Join meet.google.\ufe0fcom/abc-defg-hij", "Join"],
+    ["Join teams.microsoft.\u{e0100}com/l/meetup-join/1", "Join"],
+    ["Call on zo\u034fom.us", "Call on"],
+    ["Call on zoom.us\ufe0f", "Call on"],
+    ["Join zoom.\u0301us/j/1", "Join"],
+    // A URL parser drops tabs and line breaks, so a link split by them goes with all its words.
+    ["Join https:\t/\t/\texample.com\t/j/123456", "Join"],
+    ["Join https://zoom.us/j/123?pwd=\nSECRET", "Join"],
+    ["Join meet.google.com/\rabc-defg-hij", "Join"],
+    ["Join https:\n/\n/\nus02web\n.zoom.us/j/1", "Join"],
+    // The code of a Meet call goes once its host went, wherever it stands in the field.
     ["Join meet.google.com abc-defg-hij", "Join"],
+    ["Join meet.google.com - abc-defg-hij", "Join"],
+    ["Join meet.google.com, code abc-defg-hij", "Join code"],
     ["Join zoommtg:join?confno=SECRET", "Join"],
     ["Open data:text/html,SECRET", "Open"],
     ["Run javascript:alert(1)SECRET", "Run"],
@@ -788,6 +803,10 @@ describe("withoutLinks", () => {
     // A meeting service's host goes also without a path.
     ["Call on zoom.us", "Call on"],
     ["Call on teams.microsoft.com.", "Call on"],
+    ["Visit www.example.com", "Visit"],
+    // A Markdown image goes like a Markdown link, and keeps its label.
+    ["![img](https://example.com/x.png?SECRET)", "img"],
+    ["See ![img](https://example.com/x.png?SECRET) here", "See img here"],
   ];
   for (const [text, expected] of removed) {
     it(`removes the link from ${JSON.stringify(text)}`, () => {
@@ -820,6 +839,12 @@ describe("withoutLinks", () => {
     "Büro 25 m²",
     "ｆｕｌｌ ｗｉｄｔｈ",
     "🎉",
+    // ":/" is an emoticon unless a letter or digit follows; "www." needs a host name after it.
+    ":/",
+    "Sorry :/ verschoben",
+    "WWW.Kongress 2026",
+    // The shape of a Meet code stays without a Meet link in the field.
+    "one-time-fee review",
   ];
   for (const text of kept) {
     it(`keeps ${JSON.stringify(text)}`, () => {
@@ -833,12 +858,21 @@ describe("withoutLinks", () => {
     ["Node.js/React workshop", "workshop"],
     ["Dr.Smith/Jones", null],
     ["Sync //TODO", "Sync"],
+    // A word that only a line break joins to a link goes with it, as a URL parser would join them.
+    ["Building A\nRoom 4\nhttps://zoom.us/j/1", "Building A Room"],
   ];
   for (const [text, expected] of lost) {
     it(`drops the link-shaped word in ${JSON.stringify(text)}`, () => {
       expect(withoutLinks(text)).toBe(expected);
     });
   }
+
+  it("turns every run of white space into one space", () => {
+    expect(withoutLinks("Room 4\nFloor 2")).toBe("Room 4 Floor 2");
+    expect(withoutLinks("A\tB\r\nC")).toBe("A B C");
+    expect(withoutLinks("A\u0085B\u2028C\u2029D")).toBe("A B C D");
+    expect(withoutLinks("  A   B  ")).toBe("A B");
+  });
 
   it("keeps an empty text, and gives null for a text of links only", () => {
     expect(withoutLinks("")).toBe("");

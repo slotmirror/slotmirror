@@ -119,7 +119,9 @@ What the tool leaves out:
   twice: the accounts share no ID that would identify it safely.
 - **Links in a title or location** go, with the whole word that holds them, because a meeting link
   often holds its passcode. A word shaped like a host and a path, such as `Node.js/React`, goes
-  too. A title or location longer than 2,000 characters is cut, and ends in `…`.
+  too, and so do words that only a tab or line break joins to a link. Every run of white space
+  turns into one space. A title or location longer than 2,000 characters is cut, and the word at
+  the cut goes: the rest ends in `…`, or the field is null if no word remains.
 - **Calendars that are no source calendar** are not read. Turn a calendar on as a source in the
   editor to include it.
 

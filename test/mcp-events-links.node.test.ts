@@ -33,6 +33,14 @@ describe("withoutLinks on long titles", () => {
     ["links with stray brackets", `x${" https://a)".repeat(LENGTH / 11)}`],
     ["open brackets", "[a](".repeat(LENGTH / 4)],
     ["query marks", `${"?a".repeat(LENGTH / 2)}=`],
+    ["closing brackets after a link", `x https://a${")".repeat(LENGTH)}`],
+    [
+      "brackets around links",
+      `${"(".repeat(LENGTH / 2)}https://a https://b${")".repeat(LENGTH / 2)}`,
+    ],
+    ["words joined by line breaks", "a\n".repeat(LENGTH / 2)],
+    ["a link split by line breaks", `${"https:\n//a\n".repeat(LENGTH / 11)}y`],
+    ["Meet codes after a Meet link", `meet.google.com ${"abc-defg-hij ".repeat(LENGTH / 13)}`],
     ["digits and dots", "1.1.1.".repeat(Math.ceil(LENGTH / 6))],
   ];
   for (const [label, text] of inputs) {
@@ -48,6 +56,15 @@ describe("withoutLinks on long titles", () => {
       expect(performance.now() - started).toBeLessThan(250);
     });
   }
+
+  // The shape that took 2 s when each closing bracket rebuilt the text before it.
+  it("appends many closing brackets after a link in linear time", () => {
+    const started = performance.now();
+    expect(withoutLinks(`x https://a${")".repeat(200_000)}`, Number.POSITIVE_INFINITY)).toBe(
+      `x${")".repeat(200_000)}`,
+    );
+    expect(performance.now() - started).toBeLessThan(250);
+  });
 
   it("cuts a long text and the word at the cut, whose link part may lie after the cut", () => {
     // The cut leaves "SECRE" of a word that only the host after the cut marks as a link.
