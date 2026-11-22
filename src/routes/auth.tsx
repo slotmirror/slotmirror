@@ -180,14 +180,12 @@ async function startFlow(
 
 auth.post("/logout", async (c) => {
   const user = c.get("user");
-  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
-  // the next sign-in. Only a path of the authorization endpoint passes. The body is read first: a
-  // malformed one makes parseBody() throw, and the error handler then answers 500. That response
-  // still clears the cookie, but the user sees an error page and loses the redirect. A body that
-  // cannot be read counts as no resume value.
-  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
+  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
+  // the next sign-in. Only a path of the authorization endpoint passes. A body that cannot be read
+  // counts as no resume value, so signing out redirects instead of answering 500.
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   return c.redirect(resumePath(form.resume) ?? "/");
 });
 
