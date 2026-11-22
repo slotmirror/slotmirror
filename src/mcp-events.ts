@@ -188,8 +188,11 @@ function linkVerdict(word: string): Verdict {
   const core = coreOf(word);
   const verdict = coreVerdict(core);
   // Any dropped word with the Meet host marks the field for its code: "https://meet.google.com".
-  return verdict === "drop" && core.includes("meet.google.com") ? "meet" : verdict;
+  return verdict === "drop" && MEET_HOST.test(core) ? "meet" : verdict;
 }
+
+/** The Meet host as a whole host name: not "notmeet.google.com" and not "meet.google.com.evil". */
+const MEET_HOST = /(?:^|[^\p{L}\p{N}.-])meet\.google\.com\.?(?![\p{L}\p{N}-]|\.[\p{L}\p{N}])/u;
 
 function coreVerdict(core: string): Verdict {
   if (core === "") return "keep";

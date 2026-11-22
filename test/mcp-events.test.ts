@@ -784,6 +784,11 @@ describe("withoutLinks", () => {
     ["Join https://meet.google.com abc-defg-hij", "Join"],
     ["Join //meet.google.com abc-defg-hij", "Join"],
     ["Join meet.google.com?x=1 abc-defg-hij", "Join"],
+    ["Join meet.google.com./abc abc-defg-hij", "Join"],
+    // Only the Meet host itself marks the field; a look-alike host drops just its own word.
+    ["Join notmeet.google.com/x one-time-fee", "Join one-time-fee"],
+    ["Join meet.google.com.evil.io/x one-time-fee", "Join one-time-fee"],
+    ["Join meet.google.comx.io/x one-time-fee", "Join one-time-fee"],
     ["Join meet.google.com abc\n-defg-hij", "Join"],
     // A URL parser decodes percent-encoded bytes of a host, also in UTF-8.
     ["Join zoom.%75s/j/1234567890", "Join"],
