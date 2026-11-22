@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { SESSION_COOKIE } from "../src/session";
 import { addAccount, BASE, signIn } from "./helpers";
 
 const accountExists = async (id: string) =>
@@ -143,6 +144,31 @@ describe("form-action 'self'", () => {
     });
     expect(logout.status).toBe(302);
     expect(logout.headers.get("location")).toBe("/");
+  });
+});
+
+describe("sign-out", () => {
+  it("redirects and clears the session when the body is malformed multipart", async () => {
+    // The status and the redirect prove the fix: without it, parseBody() throws and this answers
+    // 500. The cookie assertion is a regression guard: the 500 already cleared the cookie.
+    const { cookie } = await signIn("owner@example.com");
+    const logout = await exports.default.fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie,
+        "sec-fetch-site": "same-origin",
+        "content-type": "multipart/form-data; boundary=slotmirror",
+      },
+      body: "this is not multipart",
+      redirect: "manual",
+    });
+    expect(logout.status).toBe(302);
+    expect(logout.headers.get("location")).toBe("/");
+    const cleared = (logout.headers.getSetCookie?.() ?? []).find((value) =>
+      value.startsWith(`${SESSION_COOKIE}=;`),
+    );
+    expect(cleared).toBeDefined();
+    expect(cleared).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/i);
   });
 });
 

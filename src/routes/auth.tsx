@@ -183,8 +183,9 @@ auth.post("/logout", async (c) => {
   if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
   // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
-  // the next sign-in. Only a path of the authorization endpoint passes.
-  const form = await c.req.parseBody();
+  // the next sign-in. Only a path of the authorization endpoint passes. A body that cannot be read
+  // counts as no resume value, so signing out redirects instead of answering 500.
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   return c.redirect(resumePath(form.resume) ?? "/");
 });
 
