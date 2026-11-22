@@ -650,6 +650,62 @@ describe("authorization", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it("keeps a language switch on the consent page that reloads the same request", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    // The focused layout has no user menu, so the switch sits in the page body.
+    expect(html).not.toContain('id="user-menu"');
+    const group = /<span class="segmented" role="group"[^>]*>([\s\S]*?)<\/p>/.exec(html);
+    expect(group?.[1]).toContain('class="segment active"');
+    const links = [...(group?.[1] ?? "").matchAll(/<a [^>]*href="([^"]+)"[^>]*hreflang="(\w+)"/g)];
+    expect(links.length).toBeGreaterThan(0);
+    for (const [, href = "", code = ""] of links) {
+      const target = new URL(href.replaceAll("&amp;", "&"), BASE);
+      // Same origin, the authorization endpoint, the same request, and only the language added.
+      expect(target.origin).toBe(BASE);
+      expect(target.pathname).toBe("/oauth/authorize");
+      expect(target.searchParams.get("lang")).toBe(code);
+      target.searchParams.delete("lang");
+      expect(target.search.slice(1)).toBe(query);
+    }
+    // Following the link shows the same request in the other language, with its own ticket.
+    const german = links.find(([, , code]) => code === "de");
+    const followed = await fetchApp((german?.[1] ?? "").replaceAll("&amp;", "&"), {
+      headers: { cookie },
+    });
+    expect(followed.status).toBe(200);
+    const page = await followed.text();
+    expect(page).toContain('<html lang="de"');
+    expect(page).toMatch(/name="ticket" value="[^"]+"/);
+    expect(page).toContain("127.0.0.1:33418");
+  });
+
+  it("cannot turn the language switch into a link to another site", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow, { lang: "//evil.example/x" });
+    const hrefs = [...html.matchAll(/<a [^>]*href="([^"]+)"[^>]*hreflang=/g)].map((m) =>
+      (m[1] ?? "").replaceAll("&amp;", "&"),
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      expect(href.startsWith("/oauth/authorize?")).toBe(true);
+      expect(new URL(href, BASE).origin).toBe(BASE);
+    }
+  });
+
   it("puts a letter or digit in the app tile, never a symbol that could read as a badge", async () => {
     const { cookie } = await signIn("owner@example.com");
     const cases: [string, string][] = [
