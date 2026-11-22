@@ -1,6 +1,6 @@
 import { useI18n } from "../i18n";
 import type { CurrentUser } from "../users";
-import { BrandMark, Layout } from "./layout";
+import { BrandMark, LanguageSwitch, Layout } from "./layout";
 
 /** A check mark in front of what the app may read. */
 function Check() {
@@ -111,6 +111,11 @@ export function ConsentPage(props: {
             </form>
           </noscript>
         </div>
+        {/* The focused layout has no user menu, so this is the language switch of the page. Its
+            links reload this request with ?lang=, as on the sign-in page. */}
+        <p class="fineprint">
+          <LanguageSwitch />
+        </p>
       </div>
     </Layout>
   );
