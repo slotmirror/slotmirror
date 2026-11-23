@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.2.0...slotmirror-v0.3.0) (2026-11-23)
+
+
+### Features
+
+* **ui:** redesign the app pages and serve them at the root ([#112](https://github.com/slotmirror/slotmirror/issues/112)) ([06332e6](https://github.com/slotmirror/slotmirror/commit/06332e614437e2b255bb28dc1039a1832554fb54))
+
 ## [0.2.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.1.0...slotmirror-v0.2.0) (2026-11-22)
 
 
