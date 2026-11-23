@@ -134,7 +134,7 @@ down or its trigger is gone, no alert arrives. Use an outside uptime check for t
 
 ## Settings for all mirrorings
 
-![Sync settings for all calendars, in the previous interface](../../../../../docs/images/settings.png)
+![The panel For all mirrorings on the Mirroring page](../../../../../docs/images/settings.png)
 
 Each user sets these on the **Mirroring** page. Choose **For all mirrorings** in the header. They
 apply to every mirroring.

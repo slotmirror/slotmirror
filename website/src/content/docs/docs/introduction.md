@@ -18,7 +18,7 @@ connect an account.
 The version is below 1.0. Settings and the database can still change between releases.
 :::
 
-![The previous interface: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
+![The Mirroring page: every direction grouped by the calendar it appears in, with the panel of one mirroring open](../../../../../docs/images/editor.png)
 
 ## What it does
 
