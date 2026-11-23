@@ -13,8 +13,6 @@ import {
   shortNames,
 } from "../src/editor";
 import { BASE, signIn } from "./helpers";
-// @ts-expect-error `?raw` imports are untyped without `vite/client`
-import editorScript from "../public/editor.js?raw";
 
 describe("shortNames", () => {
   it("names public providers and work domains, and tells duplicates apart", () => {
@@ -231,59 +229,10 @@ describe("read-only target", () => {
     expect(await removalsOf(g)).toBeUndefined();
     expect(await removalsOf(o)).toBeUndefined();
   });
-
-  it("offers off and the current choice on the page, without a reset", async () => {
-    const { user, cookie, w, o, g } = await setup("ro-page");
-    await setGroupMembership(env, user, w, true);
-    await setGroupMembership(env, user, g, true);
-    await setDirection(env, user, w, g, "full");
-    await setDirection(env, user, w, o, "title");
-    await makeReadOnly(o);
-    await makeReadOnly(g);
-    const page = async () =>
-      (await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })).text();
-
-    let html = await page();
-    const form = html.match(new RegExp(`<form[^>]*data-to="${o}"[^>]*>[\\s\\S]*?</form>`))?.[0];
-    const button = (choice: string) =>
-      form?.match(new RegExp(`<button[^>]*value="${choice}"[^>]*>`))?.[0];
-    for (const choice of ["off", "title"]) expect(button(choice)).not.toContain("disabled");
-    for (const choice of ["busy", "full"]) expect(button(choice)).toContain("disabled");
-    expect(html).toContain("You can only turn this direction off.");
-    expect(html).not.toContain('action="/rules/direction/reset"');
-
-    // Once every direction into the read-only calendars is off, the note no longer says "only off".
-    await setDirection(env, user, w, o, "off");
-    await setDirection(env, user, w, g, "off");
-    html = await page();
-    expect(html).toContain("slotmirror cannot write to this calendar.");
-    expect(html).not.toContain("You can only turn this direction off.");
-    expect(html).not.toContain('action="/rules/direction/reset"');
-  });
 });
 
 describe("editor page", () => {
-  it("shows the group, one card per source, and marks exceptions", async () => {
-    const { user, cookie, w, o, g } = await setup("page");
-    for (const id of [w, o, g]) await setGroupMembership(env, user, id, true);
-    await setDirection(env, user, w, g, "full");
-
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${w}`, { headers: { cookie } })
-    ).text();
-    expect(html).toContain("Block each other");
-    expect(html).toContain("Events from work");
-    expect(html).toContain('class="pill exception"');
-    expect(html).toContain(`id="src-${w}" open`);
-    expect(html).toContain("Exception");
-
-    const matrix = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
-    ).text();
-    expect(matrix).toContain('class="cell level-full exception"');
-  });
-
-  it("saves a choice from the form and returns to the open card", async () => {
+  it("saves a choice from the form and returns to the row in the open card", async () => {
     const { user, cookie, w, o } = await setup("form");
     const response = await exports.default.fetch(`${BASE}/rules/direction`, {
       method: "POST",
@@ -292,7 +241,7 @@ describe("editor page", () => {
       body: new URLSearchParams({ from: w, to: o, choice: "title" }),
     });
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`/rules?open=${w}#src-${w}`);
+    expect(response.headers.get("location")).toBe(`/rules?open=${o}#dest-${w}-${o}`);
     expect(await rulesOf(user.id)).toEqual([
       expect.objectContaining({ source: w, target: o, level: "title", enabled: 1 }),
     ]);
@@ -359,13 +308,6 @@ describe("page save", () => {
         expect.objectContaining({ source: g, target: o, level: "busy" }),
       ]),
     );
-
-    const page = await (
-      await exports.default.fetch(`${BASE}/rules?open=${w},${g}`, { headers: { cookie } })
-    ).text();
-    expect(page).toContain(`id="src-${w}" open`);
-    expect(page).toContain(`id="src-${g}" open`);
-    expect(page).toContain('id="page-bar"');
   });
 });
 
@@ -470,11 +412,6 @@ describe("opt-in categories", () => {
   const listOf = async (calendar: string) =>
     (await optionsOf("source_calendar_id", calendar)).onlyCategories;
 
-  async function page(cookie: string) {
-    const response = await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } });
-    return response.text();
-  }
-
   function saveAll(cookie: string, fields: Record<string, string>) {
     return exports.default.fetch(`${BASE}/rules/choices`, {
       method: "POST",
@@ -491,14 +428,6 @@ describe("opt-in categories", () => {
       headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
       body,
     });
-  }
-
-  /** The part of the page with the row of a direction, up to the next row. */
-  function rowOf(html: string, from: string, to: string) {
-    const start = html.indexOf(`class="dest" data-key="${from}&gt;${to}"`);
-    const open = start >= 0 ? start : html.indexOf(`class="dest" data-key="${from}>${to}"`);
-    const rest = html.slice(open);
-    return rest.slice(0, rest.indexOf('class="dest"', 20) + 1 || undefined);
   }
 
   const SAVED = {
@@ -551,12 +480,9 @@ describe("opt-in categories", () => {
     // A save of the settings keeps the list of the rule, and sends none itself.
     await setSettings(env, user, SAVED);
     expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
-    const form = /<form[^>]*id="settings"[\s\S]*?<\/form>/.exec(await page(cookie))?.[0] ?? "";
-    expect(form).toContain('name="skipCategories"');
-    expect(form).not.toContain("onlyCategories");
   });
 
-  it("stores a list from the form without the script, and shows it again", async () => {
+  it("stores a list from the form without the script", async () => {
     const { user, cookie, w, g } = await setup("onlynojs");
     await setDirection(env, user, w, g, "busy");
     const response = await saveWithoutScript(
@@ -570,20 +496,6 @@ describe("opt-in categories", () => {
     );
     expect(response.status).toBe(302);
     expect(await listOf(`${w}-cal`)).toEqual(["Kunde", "Arbeit"]);
-    const row = rowOf(await page(cookie), w, g);
-    expect(/<input[^>]*name="onlyCategories"[^>]*>/.exec(row)?.[0]).toMatch(
-      new RegExp(`form="details-${w}-${g}"[^>]*value="Kunde, Arbeit"[^>]*data-tokens`),
-    );
-    expect(row).toContain("Copies only 2 categories");
-    expect(row).toMatch(/<details class="only-edit" open/);
-  });
-
-  it("stays closed while the list is empty", async () => {
-    const { user, cookie, w, g } = await setup("onlyclosed");
-    await setDirection(env, user, w, g, "busy");
-    const row = rowOf(await page(cookie), w, g);
-    expect(row).toMatch(/<details class="only-edit">/);
-    expect(row).toContain("Copy only some categories");
   });
 
   it("clears the list with an empty field, from both forms", async () => {
@@ -609,24 +521,7 @@ describe("opt-in categories", () => {
     expect(await listOf(`${w}-cal`)).toEqual(["Kunde"]);
   });
 
-  it("shows colours for a Google source and names for an Outlook source", async () => {
-    const { user, cookie, w, g } = await setup("onlykinds");
-    await setDirection(env, user, w, g, "busy");
-    await setDirection(env, user, g, w, "busy");
-    const html = await page(cookie);
-    const outlook = rowOf(html, w, g);
-    const google = rowOf(html, g, w);
-    expect(outlook).toContain('name="onlyCategories"');
-    expect(outlook).not.toContain('name="onlyColor"');
-    expect(google).toContain('name="onlyColor"');
-    expect(google).toContain('class="color-row pick"');
-    expect(google).not.toContain('name="onlyCategories"');
-    // Both tell what the list does to events and to existing blocks.
-    expect(outlook).toContain("their existing blocks disappear");
-    expect(google).toContain("their existing blocks disappear");
-  });
-
-  it("stores colours of a Google source, and shows them checked", async () => {
+  it("stores colours of a Google source", async () => {
     const { user, cookie, w, g } = await setup("onlycolor");
     await setDirection(env, user, g, w, "busy");
     const body = new URLSearchParams({ from: g, to: w, onlyCategoriesShown: "1" });
@@ -634,14 +529,6 @@ describe("opt-in categories", () => {
     body.append("onlyColor", "color:11");
     await saveWithoutScript(cookie, body);
     expect(await listOf(`${g}-cal`)).toEqual(["color:5", "color:11"]);
-    const row = rowOf(await page(cookie), g, w);
-    expect(row).toContain("Copies only 2 colours");
-    expect(/<input[^>]*name="onlyColor"[^>]*value="color:5"[^>]*>/.exec(row)?.[0]).toContain(
-      "checked",
-    );
-    expect(/<input[^>]*name="onlyColor"[^>]*value="color:6"[^>]*>/.exec(row)?.[0]).not.toContain(
-      "checked",
-    );
   });
 
   it("refuses names for a Google source, which would stop every event", async () => {
@@ -749,24 +636,10 @@ describe("opt-in categories", () => {
     )
       .bind(user.id)
       .first<{ detail: string; accountId: string }>();
-    expect(JSON.parse(row?.detail ?? "{}")).toEqual({ onlyCategories: "2" });
+    // The count of names and the source account, which names the mirroring once the rule is gone.
+    expect(JSON.parse(row?.detail ?? "{}")).toEqual({ onlyCategories: "2", fromAccount: w });
     expect(row?.accountId).toBe(g);
     expect(row?.detail).not.toContain("Geheimkunde");
-  });
-
-  it("restores the saved list of a token field before the page counts its changes", () => {
-    // The editor script has no DOM test harness. A reset leaves a hidden field at its last value.
-    const script = String(editorScript);
-    const handler = script.split('addEventListener("reset"')[1] ?? "";
-    expect(script).toContain("const saved = field.value;");
-    expect(handler.slice(0, 80)).toContain("field.value = saved");
-    expect(handler.slice(0, 80)).not.toContain("setTimeout");
-  });
-
-  it("sends the list of a direction with the other changes of the page", () => {
-    const script = String(editorScript);
-    expect(script).toContain('data.has("onlyCategoriesShown")');
-    expect(script).toContain("body.append(`onlyCategories.${from}.${to}`");
   });
 });
 
@@ -799,44 +672,6 @@ describe("onboarding", () => {
     const rules = await rulesOf(user.id);
     expect(rules).toHaveLength(6);
     expect(rules.every((rule) => rule.origin === "group")).toBe(true);
-
-    const after = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
-    ).text();
-    expect(after).not.toContain('action="/rules/group/all"');
-  });
-
-  it("shows the first steps with connect buttons before two accounts exist", async () => {
-    const { cookie } = await signIn("fresh@org.example");
-    const page = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
-    ).text();
-    expect(page).toContain("Get started in three steps");
-    expect(page).toContain('href="/auth/microsoft/connect"');
-  });
-});
-
-describe("many accounts", () => {
-  it("collapses equal choices into one pill and shows a compact overview", async () => {
-    const { user, cookie } = await signIn("many@org.example");
-    for (let i = 1; i <= 6; i++) {
-      const id = `many-${i}`;
-      await env.DB.batch([
-        env.DB.prepare(
-          "INSERT INTO accounts (id, user_id, provider, email, in_block_group) VALUES (?, ?, 'microsoft', ?, 1)",
-        ).bind(id, user.id, `${id}@many${i}.example`),
-        env.DB.prepare(
-          "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Main', 1, 1, 1)",
-        ).bind(`${id}-cal`, id, `${id}-remote`),
-      ]);
-    }
-    await setDirection(env, user, "many-1", "many-2", "busy");
-    const page = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
-    ).text();
-    expect(page).toContain('class="matrix compact"');
-    expect(page).toContain('class="pill summary"');
-    expect(page).toContain('class="pills collapsed"');
   });
 });
 
@@ -901,15 +736,6 @@ describe("block buffer per source", () => {
       headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(fields),
     });
-  /** The buffer row of a source card. */
-  const bufferRow = async (cookie: string, from: string) => {
-    const html = await (
-      await exports.default.fetch(`${BASE}/rules?open=${from}`, { headers: { cookie } })
-    ).text();
-    const card = html.split(`id="src-${from}"`)[1]?.split("</details>\n")[0] ?? "";
-    return card.match(/<form[^>]*source-buffer[\s\S]*?<\/form>/)?.[0] ?? "";
-  };
-
   it("saves one buffer for every rule of a source from the page, and refuses invalid values", async () => {
     const { user, cookie, w, o, g } = await setup("buf");
     await setDirection(env, user, w, g, "busy");
@@ -930,15 +756,8 @@ describe("block buffer per source", () => {
     // Another source keeps its own.
     expect(await buffersFrom(user.id, g)).toEqual(["0,0"]);
 
-    const row = await bufferRow(cookie, w);
-    expect(row).toContain("30 min. before and after");
-    expect(row).toMatch(/name="bufferBefore"[^>]*value="30"/);
-    expect(row).toMatch(/name="bufferAfter"[^>]*value="30"/);
-    expect(await bufferRow(cookie, g)).toContain("No buffer");
-
     // A missing field is 0.
     expect((await save({ [`bufferBefore.${w}`]: "15" })).status).toBe(204);
-    expect(await bufferRow(cookie, w)).toContain("15 min. before<");
 
     // Settings for all rules keep the buffer of each source.
     await save({ settings: "1", "settings.daysAhead": "30" });
@@ -965,10 +784,6 @@ describe("block buffer per source", () => {
     )
       .bind(`${g}-cal`)
       .run();
-    const row = await bufferRow(cookie, w);
-    expect(row).toContain(">differs<");
-    expect(row).toMatch(/name="bufferBefore"[^>]*required[^>]*value=""/);
-
     // A save of other things leaves the buffers as they are.
     const save = saver(cookie);
     expect((await save({ [`choice.${g}.${w}`]: "busy" })).status).toBe(204);
@@ -978,7 +793,6 @@ describe("block buffer per source", () => {
       204,
     );
     expect(await buffersFrom(user.id, w)).toEqual(["5,5", "5,5"]);
-    expect(await bufferRow(cookie, w)).toContain("5 min. before and after");
   });
 
   it("gives a new direction of a source the source's buffer", async () => {
@@ -992,7 +806,6 @@ describe("block buffer per source", () => {
     await setGroupMembership(env, user, o, true);
     await setGroupMembership(env, user, g, true);
     expect(await buffersFrom(user.id, w)).toEqual(["20,0", "20,0"]);
-    expect(await bufferRow(cookie, w)).toContain("20 min. before");
     // The other sources had no buffer; their new group rules have none either.
     expect(await buffersFrom(user.id, o)).toEqual(["0,0", "0,0"]);
   });
@@ -1055,7 +868,7 @@ describe("block buffer per source", () => {
       body: new URLSearchParams({ from: w, bufferBefore: "240", bufferAfter: "" }),
     });
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`/rules?open=${w}#src-${w}`);
+    expect(response.headers.get("location")).toBe(`/rules#src-${w}`);
     expect(await buffersFrom(user.id, w)).toEqual(["240,0", "240,0"]);
 
     // The buffer belongs to the source; resetting one direction does not change it.
@@ -1094,11 +907,9 @@ describe("block buffer per source", () => {
   });
 
   it("stores the buffer of a source without rules on its account", async () => {
-    const { user, cookie, w } = await setup("bufoff");
-    expect(await bufferRow(cookie, w)).toContain("No buffer");
+    const { user, w } = await setup("bufoff");
     const buffer = { bufferBefore: 10, bufferAfter: 10 };
     expect(await setRuleDetails(env, user, { sources: [{ from: w, options: buffer }] })).toBe(true);
     expect(await buffersFrom(user.id, w)).toEqual([]);
-    expect(await bufferRow(cookie, w)).toContain("10 min. before and after");
   });
 });

@@ -25,18 +25,20 @@ change in the schedule only after that refresh.
    Calendar.
 2. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and connect that account and
    your work account.
-3. On the **Rules** page, expand the card of the account with the schedule.
-4. In the row **Calendars**, turn on the schedule next to **Main calendar**.
-5. Keep **As busy** for the work calendar, or choose **With title** if colleagues may see "Home
-   match".
-6. Choose **Save**.
+3. On the **Calendars** page, open the panel of the account with the schedule.
+4. Under **Copy from these calendars**, turn on the schedule next to the calendar marked **Main**,
+   and choose **Save**.
+5. On the **Mirroring** page, open the row from that account to your work calendar. Keep **Busy
+   only** under **What is copied**, or choose **Title** if colleagues may see "Home match". If you
+   choose **Title**, set **What others see** to **Same as you**.
+6. Choose **Save**. If nothing is mirrored yet, choose **Mirror all as busy** first.
 
 ## Things to know
 
-- The schedule is a source only. Blocks go into the main calendar of each target account.
+- The schedule is a source only. Copies go into the main calendar of each target account.
 - **Skip all-day events** is off by default, so all-day entries such as tournament days block the
   whole day. Entries that are marked as free stay out. To leave out all all-day entries, turn the
-  setting on under **For all calendars**. The setting applies to all your calendars.
+  setting on under **For all mirrorings** on the **Mirroring** page. The setting applies to all your calendars.
 
 ## Related guides
 

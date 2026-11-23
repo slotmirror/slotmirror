@@ -43,7 +43,7 @@ apps cannot send a personal token, so they always use OAuth.
 
 ### With a personal token
 
-For a script, or a client without OAuth: open **API tokens** in the app and create a token. It is
+For a script, or a client without OAuth: open **API tokens** in the app and choose **New token**. It is
 shown once. Tick **Also read my calendar events** if the token is for `list_events`; a token cannot
 gain that later. Clients send the token in the `Authorization` header, never in the URL:
 
@@ -126,7 +126,7 @@ What the tool leaves out:
   the field is null if no word remains. The filter removes links, not passcodes or meeting codes
   written as plain words, such as `Passcode: 123456` or a meeting code on its own.
 - **Calendars that are no source calendar** are not read. Turn a calendar on as a source in the
-  editor to include it.
+  panel of its account on **Calendars** to include it.
 
 A calendar that cannot be read stands in `errors` with a code: `reconnect`, `throttled` (with
 `retryAfterSeconds`), `gone` or `failed`. The events of the other calendars are still complete. One

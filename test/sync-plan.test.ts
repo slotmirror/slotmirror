@@ -230,6 +230,35 @@ describe("planSync", () => {
     }
   });
 
+  it("updates every block whose private mark the rule changed, in both directions", async () => {
+    for (const [before, after] of [
+      [true, false],
+      [false, true],
+    ] as const) {
+      const written = await desiredBlocks(RULE, sourceEvents(), options({ markPrivate: before }));
+      const desired = await desiredBlocks(RULE, sourceEvents(), options({ markPrivate: after }));
+      // An event the source marks private stays private at either mark, so its block is unchanged.
+      const was = new Map(written.map((block) => [block.marker, block.isPrivate]));
+      const flipped = desired.filter((block) => was.get(block.marker) !== block.isPrivate);
+      expect(desired.length - flipped.length, `${before}>${after}`).toBe(1);
+      expect(flipped.length, `${before}>${after}`).toBeGreaterThan(10);
+      const plan = planSync(desired, asExisting(written));
+      expect(plan.stats).toEqual({
+        create: 0,
+        update: flipped.length,
+        delete: 0,
+        unchanged: desired.length - flipped.length,
+      });
+      const updated = plan.actions.map((action) =>
+        action.kind === "update"
+          ? { targetId: action.targetId, isPrivate: action.block.isPrivate }
+          : action,
+      );
+      expect(new Set(updated.map((action) => JSON.stringify(action))).size).toBe(flipped.length);
+      for (const action of updated) expect(action).toMatchObject({ isPrivate: after });
+    }
+  });
+
   it("removes duplicate blocks of one occurrence and keeps one", async () => {
     const desired = await desiredBlocks(RULE, sourceEvents(), options());
     const [first] = desired;

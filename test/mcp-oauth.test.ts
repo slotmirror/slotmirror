@@ -6,8 +6,6 @@ import worker from "../src/index";
 import { OAUTH_COOKIE } from "../src/oauth";
 import { base64url, SESSION_COOKIE } from "../src/session";
 import { BASE, signIn } from "./helpers";
-// @ts-expect-error `?raw` imports are untyped without `vite/client`
-import editorScript from "../public/editor.js?raw";
 
 const RESOURCE = `${BASE}/mcp`;
 const LOOPBACK = "http://127.0.0.1:33418/callback";
@@ -593,16 +591,6 @@ describe("authorization", () => {
     const held = /<form[^>]*data-hold[^>]*>([\s\S]*?)<\/form>/.exec(html)?.[1] ?? "";
     expect(held.match(/<button[^>]*disabled/g)).toHaveLength(2);
     expect(html).toMatch(/<noscript>[\s\S]*<form[^>]*action="\/oauth\/authorize"/);
-    // The script turns them on. Its hold block comes first, so that no error in a later part of
-    // the shared page script can leave the consent buttons off for good.
-    const script = String(editorScript);
-    const firstCode = script
-      .split("\n")
-      .find((line) => line.trim() !== "" && !line.startsWith("//"));
-    expect(firstCode).toBe("{");
-    const hold = script.slice(0, script.indexOf("\n}\n"));
-    expect(hold).toContain('querySelectorAll("form[data-hold] button")');
-    expect(hold).toContain("button.disabled = false");
   });
 
   it("shows the client's name, where it returns to, and allows that origin as form target", async () => {
@@ -634,20 +622,36 @@ describe("authorization", () => {
       redirectUri: LOOPBACK,
     };
     const { html } = await consent(cookie, flow);
-    // Like the sign-in page: the logo bar, but no sidebar, page links or user menu.
-    expect(html).toContain('class="topbar"');
-    expect(html).not.toContain("has-sidebar");
+    // Like the sign-in page: the logo bar, but no sidebar, page links or account menu.
+    expect(html).toContain('class="pub-head"');
+    const inApp = await (await fetchApp("/tokens", { headers: { cookie } })).text();
+    for (const part of [
+      'class="sidebar"',
+      "<nav",
+      'href="/mirroring"',
+      'href="/calendars"',
+      'href="/tokens"',
+      'popovertarget="user-menu"',
+    ]) {
+      // Control: each part is on a page of the app.
+      expect(inApp).toContain(part);
+      expect(html).not.toContain(part);
+    }
     expect(html).not.toContain('href="/rules"');
-    expect(html).not.toContain('popovertarget="user-menu"');
     expect(html).toContain("Signed in as owner@example.com");
     // The tile shows a letter, never a logo, and the warning and the target stay on the page.
-    expect(html).toMatch(/class="consent-tile app"[^>]*>A</);
+    expect(html).toMatch(/class="pub-tile is-app"[^>]*>A</);
     expect(html).toContain("slotmirror did not check it");
-    expect(html).toContain("Your answer goes back to 127.0.0.1:33418.");
-    // The logo appears twice; each pattern id must be unique, or the second mark loses its hatch.
-    const ids = [...html.matchAll(/<pattern id="([^"]+)"/g)].map((match) => match[1]);
-    expect(ids).toHaveLength(2);
-    expect(new Set(ids).size).toBe(2);
+    expect(html).toMatch(/<dt>Returns to<\/dt><dd[^>]*>127\.0\.0\.1:33418<\/dd>/);
+    // The logo appears twice; each id must be unique, or the second mark loses its hatch.
+    const marks = [...html.matchAll(/<svg class="brand-mark"[\s\S]*?<\/svg>/g)].map(([m]) => m);
+    expect(marks).toHaveLength(2);
+    expect(new Set(marks).size).toBe(2);
+    const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+    const hatched = marks.filter((mark) => mark.includes("url(#"));
+    expect(hatched).toHaveLength(1);
+    expect(ids).toContain(/url\(#([^)]+)\)/.exec(hatched[0] ?? "")?.[1]);
   });
 
   it("keeps a language switch on the consent page that reloads the same request", async () => {
@@ -660,10 +664,14 @@ describe("authorization", () => {
     };
     const { html } = await consent(cookie, flow);
     const query = authorizeQuery(flow, await challengeOf(flow.verifier));
-    // The focused layout has no user menu, so the switch sits in the page body.
+    // The consent page has no account menu, so the language switch sits in the footer.
     expect(html).not.toContain('id="user-menu"');
-    const group = /<span class="segmented" role="group"[^>]*>([\s\S]*?)<\/p>/.exec(html);
-    expect(group?.[1]).toContain('class="segment active"');
+    // The language group ends where the theme group of the footer starts.
+    const group =
+      /<span class="seg" role="group" aria-label="Language">([\s\S]*?)<span class="seg" role="group" aria-label="Theme"/.exec(
+        html,
+      );
+    expect(group?.[1]).toContain('aria-current="true"');
     const links = [...(group?.[1] ?? "").matchAll(/<a [^>]*href="([^"]+)"[^>]*hreflang="(\w+)"/g)];
     expect(links.length).toBeGreaterThan(0);
     for (const [, href = "", code = ""] of links) {
@@ -722,7 +730,7 @@ describe("authorization", () => {
         redirectUri: LOOPBACK,
       };
       const { html } = await consent(cookie, flow);
-      expect(/class="consent-tile app"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(initial);
+      expect(/class="pub-tile is-app"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(initial);
     }
   });
 
@@ -757,6 +765,8 @@ describe("authorization", () => {
       "https://evil.example/",
       "//evil.example/",
       "/rules",
+      "/mirroring",
+      "/next/tokens",
       "/oauth/authorizeX",
       // A line break would make the Location header throw; a long path would not fit the cookie.
       "/oauth/authorize?a\r\nb",
@@ -1334,17 +1344,19 @@ describe("ending a connection", () => {
     const page = await fetchApp("/tokens", { headers: { cookie } });
     const html = await page.text();
     expect(html).toContain("Test agent");
-    const grantId = /action="\/tokens\/apps\/([^/]+)\/revoke"/.exec(html)?.[1];
+    const grantId = /href="\/tokens\?a=([^&"]+)"/.exec(html)?.[1];
     expect(grantId).toBeTruthy();
     const response = await postForm(`/tokens/apps/${grantId}/revoke`, {}, { cookie, origin: BASE });
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect((await mcpCall(tokens.access_token)).status).toBe(401);
   });
 
   it("shows the admin's end button for a user who has only a connected app", async () => {
     const admin = await signIn("admin@example.com");
     const { user } = await connected();
-    const page = await (await fetchApp("/admin", { headers: { cookie: admin.cookie } })).text();
+    const page = await (
+      await fetchApp(`/admin?u=${user.id}`, { headers: { cookie: admin.cookie } })
+    ).text();
     expect(page).toContain(`/admin/users/${user.id}/revoke-tokens`);
   });
 
@@ -1357,7 +1369,7 @@ describe("ending a connection", () => {
         {},
         { cookie: admin.cookie, origin: BASE },
       );
-      expect(response.status).toBe(302);
+      expect(response.status).toBe(303);
       expect((await mcpCall(tokens.access_token)).status).toBe(401);
       expect((await refresh(flow, tokens.refresh_token)).status).toBe(400);
       // The rows go too: a reset must free the slots, not only stop the tokens.

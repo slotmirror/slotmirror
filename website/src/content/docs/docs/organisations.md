@@ -35,7 +35,7 @@ Values: `busy`, `title`, `title_location`.
 - The caps apply at every run.
 - A lower cap also rewrites the blocks that a rule already wrote.
 - An invalid value counts as `busy`.
-- On the Rules page, a capped choice shows the note "This deployment's policy allows at most …".
+- On the **Mirroring** page, a capped choice shows the note "Your organisation allows at most … here."
 
 ## Offboarding
 

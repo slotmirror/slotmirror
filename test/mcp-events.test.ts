@@ -551,6 +551,56 @@ describe("events", () => {
     expect(await titles({})).toEqual(["Budget review", "School play"]);
   });
 
+  it("gains no detail from a mirroring's level, its private mark or the audit", async () => {
+    const { token, userId } = await user();
+    const source = await account(userId, "mark-a", { calendar: "Work", email: "me@org.example" });
+    const target = await account(userId, "mark-b", { calendar: "Home" });
+    await env.DB.prepare(
+      `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options)
+       VALUES ('mark-rule', ?, 'mark-a-main', 'mark-b-main',
+               '{"daysAhead":30,"detailLevel":"full","markPrivate":true}')`,
+    )
+      .bind(userId)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO audit_events (org_id, user_id, account_id, rule_id, kind, detail)
+       SELECT org_id, id, 'mark-b', 'mark-rule', 'rule_updated', '{"fromAccount":"AUDIT-ONLY"}'
+       FROM users WHERE id = ?`,
+    )
+      .bind(userId)
+      .run();
+    const tomorrow = Math.floor(Date.now() / DAY) * DAY + DAY + 10 * 3_600_000;
+    const utc = (time: number) => ({
+      dateTime: new Date(time).toISOString().slice(0, 19),
+      timeZone: "UTC",
+    });
+    await wireEvent(source, "meeting", {
+      start: utc(tomorrow),
+      end: utc(tomorrow + 3_600_000),
+      title: "Takeover",
+      location: "Room 9",
+    });
+    expect((await target.runRule("mark-rule")).stats.create).toBe(1);
+    const answer = await listEvents(token, {
+      start: new Date(tomorrow - 3_600_000).toISOString(),
+      end: new Date(tomorrow + 2 * 3_600_000).toISOString(),
+      includeMirrors: true,
+    });
+    const seen = answer.events.map(({ calendar, title, location, private: hidden }) => [
+      calendar,
+      title,
+      location,
+      hidden,
+    ]);
+    // The level "full" does not lift the cap of the org account, and the private copy shows no
+    // title in the target either.
+    expect(seen).toEqual([
+      ["Work", "Takeover", null, false],
+      ["Home", null, null, true],
+    ]);
+    expect(JSON.stringify(answer)).not.toMatch(/AUDIT-ONLY|fromAccount|Room 9/);
+  });
+
   it("reads only calendars that the user turned on as sources", async () => {
     const { token, userId } = await user();
     const stub = await account(userId, "src-a", { source: false });

@@ -1,7 +1,11 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import { I18nProvider, i18nFor } from "../src/i18n";
-import { LanguageSwitch } from "../src/pages/layout";
+import { I18nProvider, i18nFor, useLanguageHref } from "../src/i18n";
+
+/** The link of the language switch of the shell and of the palette: one `href` per locale. */
+function LanguageSwitch() {
+  return <a href={useLanguageHref("de")}>Deutsch</a>;
+}
 
 /** The language links that the switch renders for a page. */
 async function linksFor(page: string): Promise<string[]> {

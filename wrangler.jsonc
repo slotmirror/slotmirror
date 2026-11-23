@@ -7,7 +7,12 @@
   // separate kind of log and stays in Workers Logs.
   "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   "upload_source_maps": true,
-  "assets": { "directory": "./public" },
+  // dist/public is built from public/ (CSS and JS minified, with the hash in the file name). The
+  // `build` hook below creates it, so it exists before wrangler reads this line.
+  "assets": { "directory": "./dist/public" },
+  // Builds dist/public and writes src/asset-manifest.ts (the hashes) before `wrangler dev` and
+  // `wrangler deploy`, and again in dev when a file in public/ changes.
+  "build": { "command": "node scripts/asset-manifest.mjs", "watch_dir": "public" },
   "d1_databases": [
     {
       "binding": "DB",

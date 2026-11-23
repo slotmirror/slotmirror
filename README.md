@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="760" alt="The Rules page: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+  <img src="docs/images/demo.gif" width="760" alt="The previous interface: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
 </p>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
@@ -35,40 +35,41 @@ connect an account.
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
 
-![The Rules page: one card per calendar, and an overview of all directions](docs/images/editor.png)
+![The previous interface: one card per calendar, and an overview of all directions](docs/images/editor.png)
 
 ## What it does
 
-- **One group for the common case.** Put your calendars in the block group, and each sees the
-  others only as "Busy", marked private.
-- **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
-  with title, or everything. An example event shows the result before you save.
+- **One step for the common case.** Choose **Mirror all as busy** on the **Mirroring** page, and
+  each calendar shows the others only as busy, by default as a private event.
+- **More detail where you want it.** Per mirroring you choose what is copied: not copied, busy
+  only, title, or everything. You also choose what others see: a private event, or the same as
+  you. A preview shows the result before you save.
 - **Working hours.** Each account can have working hours: chosen weekdays and a time range, for
-  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the account settings. Per
-  calendar and target you can then mirror only the events inside the working hours of the target
-  account. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
+  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the calendar's panel on the **Calendars** page. Per
+  mirroring you can then copy only the events inside the working hours of the target
+  calendar. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
   event's real times; it is never cut to the range. An all-day event counts if one of its dates is a
   chosen weekday. The end must be after the start; "until midnight" ends the range at the end of the
   day, and a range over midnight is not possible. An account has no working hours until you set
   them; the time zone field starts with the browser's zone, or the deployment's `TIME_ZONE` without
-  JavaScript. Turning them on or off does not change whether a direction in the block group is an
-  exception; the reset turns them off. On the two days a year when clocks change, a range that spans
+  JavaScript. On the two days a year when clocks change, a range that spans
   the change is one hour shorter or longer in real time. A start or end in the skipped hour moves
   forward by an hour; one in the repeated hour means its first occurrence, for the start and the end
   alike. A range that ends at 02:30 on the night clocks go back therefore ends an hour before the
   second 02:30.
-- **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
-  colour, or an Outlook category. Outlook shows the category's colour if the category exists in
+- **A colour for the copies.** Per mirroring you can colour the copies, under **Look of the
+  copies**: a Google event colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
-- **A buffer around the blocks.** Per source calendar account, blocks can start up to 240 minutes
-  earlier and end up to 240 minutes later than the event, for example for travel time. The buffer
-  applies to every target of that account. The account keeps it while it has no targets, and new
-  directions and group rules from it take it. The default is 0. All-day events get no buffer. Where
+- **A buffer around the blocks.** Per source calendar, blocks can start up to 240 minutes
+  earlier and end up to 240 minutes later than the event, for example for travel time. You set
+  **Buffer before** and **Buffer after** in the calendar's panel on the **Calendars** page. The
+  buffer applies to every target of that calendar. The calendar keeps it while it has no targets,
+  and new mirrorings from it take it. The default is 0. All-day events get no buffer. Where
   buffered blocks overlap, each event keeps its own block. If one event reaches a calendar through
   two directions with the same buffer, it gets one block. With different buffers it can get two, so
   that the wider buffer is never lost.
-- **A colour per account.** Each account gets its own colour in the pages, automatically or
-  chosen under "Settings". It does not change any calendar.
+- **A colour per calendar.** Each calendar gets its own colour in the pages, automatically or
+  chosen in its panel on the **Calendars** page (**Colour**). It does not change any calendar.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar
@@ -116,11 +117,29 @@ above. The code of the waitlist Worker is in
 
 ## Screens
 
+The screenshots in this section show the previous interface.
+
 | Accounts                                        | Settings for all calendars                 |
 | ----------------------------------------------- | ------------------------------------------ |
 | ![Connected accounts](docs/images/accounts.png) | ![Sync settings](docs/images/settings.png) |
 
 ![A source card with several calendars of one account](docs/images/source-calendars.png)
+
+## UI changed
+
+This release replaces the interface. The Overview is the start page, and Mirroring, Calendars,
+Activity, API tokens and Admin are pages of their own, with a command palette (`Ctrl+K` or
+`Cmd+K`) and a panel for details. The screenshots above still show the previous
+interface.
+
+- The pages have short addresses: `/` (Overview), `/mirroring`, `/calendars`, `/activity`,
+  `/tokens` and `/admin`. The page `/tokens` exists only when `MCP_ENABLED=1`. The preview addresses below `/next` answer with a permanent redirect to
+  the same page for one release. Update bookmarks.
+- `/rules` redirects to `/mirroring`.
+- Nothing else moves. The sign-in, the OAuth flow, the MCP endpoint, the webhooks and the form
+  endpoints keep their addresses. Old form endpoints below `/next` keep working for one release.
+- The interface needs no database migration of its own. To go back, deploy the previous release
+  again.
 
 ## Settings
 
@@ -197,7 +216,7 @@ tokens are deleted, or expires within days; its notifications are ignored. The a
 If the provider keeps failing or refuses the tokens, the removal tries again after 1 minute,
 10 minutes, 2 hours and 12 hours. After the fifth failed attempt, the tokens are deleted and the
 remaining blocks stay. A removal in a paused account that stays waits 14 days for a reconnect, and
-then ends. The page **Blocks left in calendars** then lists each calendar with the block count, the
+then ends. The page **Copies left in calendars** then lists each calendar with the block count, the
 period and the marker, without event contents. After a removal ended, a later reconnect does not remove these blocks. If the page says that the
 state is unknown, a removal may still be waiting, and a reconnect can finish it.
 If a removal cannot be queued at all, the account and its rules stay and the request reports an
@@ -260,9 +279,9 @@ A provider can refuse an account's refresh token for good. Examples: the user re
 admin ended the sessions, or Google's testing mode ended the token after 7 days. slotmirror then
 marks the account and stops its work until the user connects it again:
 
-- The accounts page shows a notice at the top. It names the account's address and provider and
+- The Calendars page shows a notice. It names the account's address and provider and
   has a **Reconnect** button. The button starts the provider's sign-in with that address
-  preselected. The account's row shows the same state, and the Rules page shows the notice too.
+  preselected. The Mirroring page shows the notice too.
 - The admin page lists which users have accounts that need reconnecting, without the addresses.
 - The activity log records "Token refresh failed", with the provider's error code.
 - The account asks the provider nothing more. Rules into its calendars pause, and rules that read
@@ -397,7 +416,7 @@ pnpm dev
 
 `wrangler dev --var DEV_FAKE_CALENDARS:1 --var DEV_FAKE_LATENCY_MS:80` replaces Graph and Google
 with simulated calendars inside the Durable Objects. Signed in as an admin, `POST /dev/seed?accounts=10&events=200`
-creates ten accounts in the block group, `POST /dev/cycle` starts a sync cycle, and `GET /dev/stats`
+creates ten accounts that mirror each other as busy, `POST /dev/cycle` starts a sync cycle, and `GET /dev/stats`
 counts runs, writes and provider calls. Without the variable the `/dev` routes do not exist.
 
 ### Architecture

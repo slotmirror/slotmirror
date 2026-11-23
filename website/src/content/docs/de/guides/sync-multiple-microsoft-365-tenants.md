@@ -26,19 +26,20 @@ jedem Tenant sehen sie deshalb.
    organizational directory and personal Microsoft accounts** an. Eine App für nur einen Tenant
    kann den zweiten Tenant nicht verbinden.
 2. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein und setze `PUBLIC_URL`.
-3. Verbinde unter **Konten** ein Konto pro Tenant. Blockt ein Tenant die Zustimmung durch Benutzer,
+3. Verbinde auf der Seite **Kalender** mit **Kalender verbinden** ein Konto pro Tenant. Blockt ein Tenant die Zustimmung durch Benutzer,
    muss sein Admin der App einmal zustimmen.
-4. Füge auf der Seite **Regeln** die Kalender zur Gruppe **Blocken sich gegenseitig** hinzu.
-5. Wähle **Speichern**.
+4. Wähle auf der Seite **Spiegelung** **Alle als belegt spiegeln**. Jeder Kalender zeigt dann die
+   Termine der anderen als belegt.
 
-## Namen auf der Seite Regeln
+## Namen der Kalender
 
-slotmirror leitet aus jeder Adresse einen kurzen Namen ab. Du kannst ein Konto umbenennen, zum
-Beispiel nach der Firma. Die Übersicht liest sich dann „von Firma A an Firma B“.
+slotmirror leitet aus jeder Adresse einen kurzen Namen ab. Du kannst einen Kalender umbenennen, zum
+Beispiel nach der Firma. Die Seite **Spiegelung** liest sich dann „Firma A nach Firma B“. Öffne
+dazu auf der Seite **Kalender** das Panel des Kalenders, ändere **Name** und wähle **Speichern**.
 
 ## Gut zu wissen
 
-- Jeder Tenant sieht nur „Belegt“, als privat markiert, außer du wählst für eine Richtung mehr
+- Jeder Tenant sieht nur einen privaten Termin, außer du wählst für eine Spiegelung mehr
   Details.
 - Wenn du dich mit einem Tenant anmeldest und nur dessen Konten zulassen willst, siehe
   [Organisations](../../../docs/organisations/).
@@ -53,13 +54,13 @@ Zustimmung durch Benutzer, muss sein Admin der App einmal zustimmen. Siehe
 
 ### Kann ich mehr als zwei Tenants verbinden?
 
-Ja. Verbinde ein Konto pro Tenant und füge ihre Kalender zur Gruppe **Blocken sich gegenseitig**
-hinzu.
+Ja. Verbinde ein Konto pro Tenant. **Alle als belegt spiegeln** auf der Seite **Spiegelung**
+gilt dann für alle.
 
 ### Sieht ein Kunde die Termine eines anderen Kunden?
 
-Nein, außer du wählst für diese Richtung mehr Details. Standardmäßig sieht jeder Tenant nur
-„Belegt“, als privat markiert.
+Nein, außer du wählst für diese Spiegelung mehr Details. Standardmäßig sieht jeder Tenant nur
+einen privaten Termin.
 
 ## Verwandte Anleitungen
 

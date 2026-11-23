@@ -45,7 +45,18 @@ interface WorkerSecrets {
   ALERT_WEBHOOK_URL?: string;
   /** Optional. An outside monitor's URL that hears a plain GET once an hour from the cron. */
   HEARTBEAT_URL?: string;
-  /** Local load tests only, set with `wrangler dev --var`: "1" turns on simulated calendars. */
+  /**
+   * Local development only: sign every request in as the user with this email, without a provider.
+   * Needs DEV_FAKE_CALENDARS=1. Works only on localhost, 127.0.0.1 and [::1], and not while
+   * PUBLIC_URL names another host (`devSignInEmail` in session.ts). Never set it behind a proxy or
+   * on a server that listens on a non-loopback address: anyone who reaches it acts as this user.
+   * The user must exist in the local database.
+   */
+  DEV_SIGN_IN_AS?: string;
+  /**
+   * Development and load tests only: "1" turns on simulated calendars and the /dev routes. It is
+   * also the development marker that DEV_SIGN_IN_AS needs. Never set it for real users.
+   */
   DEV_FAKE_CALENDARS?: string;
   /** Local load tests only: simulated network time per provider call, in milliseconds. */
   DEV_FAKE_LATENCY_MS?: string;

@@ -30,8 +30,7 @@ import {
   signResume,
   verifyConsentTicket,
 } from "../mcp-oauth";
-import { ConsentPage } from "../pages/consent";
-import { MessagePage } from "../pages/message";
+import { ConsentPage, MessagePage } from "../pages/next/public";
 import { can } from "../permissions";
 import { render } from "../render";
 import type { SignedInUser } from "../users";

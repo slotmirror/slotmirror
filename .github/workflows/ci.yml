@@ -26,6 +26,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm assets:check
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -33,3 +34,134 @@ jobs:
       - run: pnpm suite:proof
       - run: pnpm suite:gate
       - run: pnpm waitlist:check
+
+  # The browser checks drive the redesigned app pages in a real browser (test/browser/README.md).
+  # A workflow-level `paths` filter would leave the job unreported on other pull requests. This job
+  # runs for every pull request and push, decides in `browser-changes`, and the browser job is
+  # skipped, not missing, when nothing changed that the pages are built or tested from. The filter
+  # takes all of `src/`, `public/` and `scripts/`: the pages reach most modules of `src/` through
+  # `src/app.tsx` (the CSP, rendering, the editor, the catalogs), and a narrower list missed many.
+  browser-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browser: ${{ steps.changes.outputs.browser }}
+    steps:
+      # Depth 2 holds the merge commit (or the squash commit on main) and its first parent.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: changes
+        run: |
+          paths='^(src/|public/|scripts/|test/browser/|package\.json$|pnpm-lock\.yaml$|wrangler\.jsonc$|migrations/|tsconfig[^/]*\.json$|\.github/workflows/ci\.yml$)'
+          # -z keeps non-ASCII paths unquoted. --no-renames lists the old path of a moved file too.
+          # The list goes to a file, so that a failed git diff fails the step instead of a skip.
+          git diff --name-only -z --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          # grep exits 1 for no match and 2 for an error. Only no match may skip the browser job.
+          rc=0
+          grep -zqE "$paths" "$RUNNER_TEMP/changed" || rc=$?
+          if [ "$rc" -gt 1 ]; then exit "$rc"; fi
+          if [ "$rc" -eq 0 ]; then
+            echo "browser=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "browser=false" >> "$GITHUB_OUTPUT"
+            echo "No path of the app pages or their checks changed. The browser job is skipped."
+          fi
+
+  browser:
+    needs: browser-changes
+    if: needs.browser-changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AGENT_BROWSER_VERSION: 0.43.0
+      BASE_URL: http://localhost:8822
+      WRANGLER_SEND_METRICS: "false"
+      # Headless Chrome on a runner has no mouse, so it matches `(hover: none)`, and the pages hide
+      # the keyboard hints as on touch. The checks test a desktop: report a mouse (hover 2, fine 4).
+      AGENT_BROWSER_ARGS: --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The scripts are zsh and read the results with jq.
+      - run: sudo apt-get update && sudo apt-get install -y zsh jq
+      # The version is pinned, so the browser cache key changes only with it.
+      - run: npm install --global "agent-browser@${AGENT_BROWSER_VERSION}"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.agent-browser/browsers
+          key: agent-browser-${{ runner.os }}-${{ env.AGENT_BROWSER_VERSION }}
+      # Downloads the browser on a cache miss. The system libraries are not cached, so this runs always.
+      - run: agent-browser install --with-deps
+      # Fake values only. The sign-in bypass works on localhost only; the simulated calendars
+      # answer for accounts with the token "fake", which /dev/seed stores. No provider is called.
+      - name: Write CI dev vars
+        run: |
+          {
+            echo "SESSION_SECRET=ci-session-secret-with-at-least-32-characters"
+            echo "TOKEN_ENCRYPTION_KEY=$(printf 'ci-fake-key-%.0s' 1 2 3 | head -c 32 | base64)"
+            echo "MICROSOFT_CLIENT_ID=ci-fake-client-id"
+            echo "MICROSOFT_CLIENT_SECRET=ci-fake-client-secret"
+            echo "ADMIN_EMAILS=dev@example.com"
+            echo "DEV_SIGN_IN_AS=dev@example.com"
+            echo "DEV_FAKE_CALENDARS=1"
+          } > .dev.vars
+      - run: pnpm db:migrate:local
+      # The scripts expect the accounts sim-u-dev-1 to 3: /dev/seed names them sim-<user id>-<n>
+      # (src/routes/dev.tsx:155), so the dev user must have the id "u-dev". The sign-in bypass only
+      # finds an existing user (src/app.tsx:151). The default org follows the variables.
+      - name: Create the dev user
+        run: |
+          pnpm exec wrangler d1 execute DB --local --command \
+            "INSERT OR IGNORE INTO orgs (id, name) VALUES ('default', 'Example'); INSERT OR IGNORE INTO users (id, org_id, email, role) VALUES ('u-dev', 'default', 'dev@example.com', 'admin');"
+      - name: Start the dev server
+        id: server
+        run: |
+          nohup pnpm exec wrangler dev --port 8822 > "$RUNNER_TEMP/wrangler.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS "$BASE_URL/healthz" > /dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "The dev server did not answer /healthz within 120 seconds."
+          cat "$RUNNER_TEMP/wrangler.log"
+          exit 1
+      # -f fails the step on a non-2xx answer (409 means real accounts, 404 a missing dev user).
+      # setup.sh adds what /dev/seed does not set: working hours on sim-u-dev-1.
+      - name: Seed
+        run: |
+          curl -fsS -X POST "$BASE_URL/dev/seed?accounts=5&events=50&days=30"
+          zsh test/browser/setup.sh "$BASE_URL"
+      # TMPDIR makes run-all.sh write its outputs folder where the upload step finds it.
+      - name: Browser checks, enhanced navigation
+        id: mode-on
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-out"
+          TMPDIR="$RUNNER_TEMP/browser-out" RETRIES=1 MODE=on zsh test/browser/run-all.sh "$BASE_URL"
+      - name: Reseed
+        if: ${{ !cancelled() && steps.server.conclusion == 'success' }}
+        run: |
+          curl -fsS -X POST "$BASE_URL/dev/seed?accounts=5&events=50&days=30"
+          zsh test/browser/setup.sh "$BASE_URL"
+      - name: Browser checks, plain mode
+        if: ${{ !cancelled() && steps.server.conclusion == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-out"
+          TMPDIR="$RUNNER_TEMP/browser-out" RETRIES=1 MODE=off zsh test/browser/run-all.sh "$BASE_URL"
+      - name: Upload the outputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-outputs
+          path: |
+            ${{ runner.temp }}/browser-out
+            ${{ runner.temp }}/wrangler.log
+          if-no-files-found: warn
+          retention-days: 7

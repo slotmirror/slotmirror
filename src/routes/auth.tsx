@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { appPath } from "../app-base";
 import { RESUME_COOKIE, resumePath, resumeTarget } from "../mcp-oauth";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
@@ -7,8 +8,7 @@ import { recordAudit } from "../audit";
 import { PROVIDER_LABEL, signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
-import { MessagePage } from "../pages/message";
-import { OAuthErrorPage } from "../pages/oauth-error";
+import { MessagePage, OAuthErrorPage } from "../pages/next/public";
 import {
   classifyExchangeError,
   classifyProviderError,
@@ -415,7 +415,7 @@ auth.get("/:provider/callback", async (c) => {
     detail: { provider },
   });
   // Load the new account's calendars now, so that the editor can use them at once.
-  await refreshUserCalendars(c.env, user.id);
+  await refreshUserCalendars(c.env, user.id, t.editor.defaultBlockTitle);
   // With a second account the next step is choosing where events go.
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?")
     .bind(user.id)
@@ -423,5 +423,5 @@ auth.get("/:provider/callback", async (c) => {
   const rules = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM rules WHERE user_id = ?")
     .bind(user.id)
     .first<{ n: number }>();
-  return c.redirect((count?.n ?? 0) >= 2 && (rules?.n ?? 0) === 0 ? "/rules" : "/");
+  return c.redirect((count?.n ?? 0) >= 2 && (rules?.n ?? 0) === 0 ? appPath("/mirroring") : "/");
 });

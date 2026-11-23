@@ -1,9 +1,10 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { matchedRoutes } from "hono/route";
+import { matchedRoutes, routePath } from "hono/route";
 import type { AppEnv } from "./app-env";
 import { mcpEnabled } from "./config";
 import type { Messages } from "./i18n";
 import { can, MCP_ACTIONS, type Action } from "./permissions";
+import type { CurrentUser } from "./users";
 
 /**
  * What a route needs:
@@ -41,7 +42,6 @@ export const ROUTE_NEEDS: Readonly<Record<string, RouteNeed>> = {
   "POST /accounts/:id/name": "accounts:write",
   "GET /accounts/:id/disconnect": "accounts:write",
   "POST /accounts/:id/disconnect": "accounts:write",
-  "GET /rules": "rules:read",
   "POST /rules/calendars/refresh": "rules:write",
   "POST /rules": "rules:write",
   "POST /rules/group/all": "rules:write",
@@ -63,7 +63,37 @@ export const ROUTE_NEEDS: Readonly<Record<string, RouteNeed>> = {
   "POST /rules/:id/enable": "rules:write",
   "POST /rules/:id/pause": "rules:write",
   "POST /rules/:id/delete": "rules:write",
+  // The pages of the app. The Overview is `GET /`.
+  "GET /mirroring": "rules:read",
+  "POST /mirroring": "rules:write",
+  "GET /calendars": "accounts:read",
+  // The handler asks for "org:audit" for `?scope=org`.
   "GET /activity": "activity:read",
+  "POST /calendars/refresh": "rules:write",
+  "POST /calendars/:id": "accounts:write",
+  // The page of the previous release, `/next/...`: a GET answers 308 to the page without the
+  // prefix, and the POST endpoints keep working for one release (see `mountAppPages`). The GET
+  // routes of the mounted routers never answer, because the redirects come first.
+  "GET /next": "accounts:read",
+  "GET /next/mirroring": "rules:read",
+  "GET /next/calendars": "accounts:read",
+  "GET /next/activity": "activity:read",
+  "GET /next/tokens": "tokens:read",
+  "GET /next/admin": "users:read",
+  // The list of rules moved to Mirroring: a permanent redirect.
+  "GET /rules": "rules:read",
+  "POST /next/mirroring": "rules:write",
+  "POST /next/calendars/refresh": "rules:write",
+  "POST /next/calendars/:id": "accounts:write",
+  "POST /next/tokens": "tokens:create",
+  "POST /next/tokens/apps/:id/revoke": "tokens:revoke",
+  "POST /next/tokens/:id/revoke": "tokens:revoke",
+  "POST /next/admin/users/:id/delete": "users:manage",
+  "POST /next/admin/users/:id/reset-sign-in": "users:manage",
+  "POST /next/admin/users/:id/revoke-tokens": "users:manage",
+  "POST /next/admin/compare": "org:operate",
+  "POST /next/admin/test-alert": "org:operate",
+  "POST /next/admin/mcp-policy": "org:policy",
   // An admin also sees the rest of other users there; the handler asks for "org:audit".
   "GET /cleanup": "activity:read",
   "GET /account/delete": "account:delete",
@@ -89,6 +119,17 @@ export const ROUTE_NEEDS: Readonly<Record<string, RouteNeed>> = {
   "POST /dev/burst": "dev:tools",
   "POST /dev/cycle": "dev:tools",
   "GET /dev/stats": "dev:tools",
+  "GET /dev/next-preview/:page": "dev:tools",
+};
+
+/**
+ * Routes that write something that another action guards, besides the action in `ROUTE_NEEDS`. A
+ * user needs both. The calendar panel stores the account's name and hours (`accounts:write`) and
+ * also adds, removes and changes rules (`rules:write`), as the old rule routes do.
+ */
+export const ROUTE_ALSO_NEEDS: Readonly<Record<string, Action>> = {
+  "POST /calendars/:id": "rules:write",
+  "POST /next/calendars/:id": "rules:write",
 };
 
 /** Refusals that get a page instead of a 404, because a person follows a link to them. */
@@ -98,13 +139,27 @@ const REFUSAL_PAGES: Readonly<Record<string, (t: Messages) => string>> = {
   "POST /oauth/authorize": (t) => t.consent.mcpOff,
 };
 
+/** The first matched route that is not a middleware. */
+function answering(c: Context<AppEnv>) {
+  return matchedRoutes(c).find((candidate) => candidate.method !== "ALL");
+}
+
 /**
  * The route that answers a request: the first matched route that is not a middleware. Hono runs
  * the matched handlers in this order, and `use()` registers its middleware with method "ALL".
  */
 export function answeringRoute(c: Context<AppEnv>): string | null {
-  const route = matchedRoutes(c).find((candidate) => candidate.method !== "ALL");
+  const route = answering(c);
   return route ? `${route.method} ${route.path}` : null;
+}
+
+/**
+ * The pattern of the answering route, for the log of a failed request, never the path itself. The
+ * last matched handler can be a middleware ("/rules/*" for `GET /rules`, whose redirect comes
+ * before the router's guard), so it names the route only if nothing else matched.
+ */
+export function answeringPattern(c: Context<AppEnv>): string {
+  return answering(c)?.path ?? routePath(c, -1);
 }
 
 /**
@@ -117,6 +172,8 @@ export function routePermissions(
     c: Context<AppEnv>,
     message: (t: Messages) => string,
   ) => Response | Promise<Response>,
+  // The test of one action. A test replaces it to try a role that lacks one action of a pair.
+  allows: (user: CurrentUser, action: Action) => boolean = can,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     // No named route answers: a 404 anyway, unless an `all()` handler would run without a check.
@@ -128,7 +185,8 @@ export function routePermissions(
     if (MCP_ACTIONS.has(need) && !mcpEnabled(c.env)) return c.notFound();
     const user = c.get("user");
     if (!user) return next();
-    if (can(user, need)) return next();
+    const also = ROUTE_ALSO_NEEDS[route];
+    if (allows(user, need) && (also === undefined || allows(user, also))) return next();
     const page = REFUSAL_PAGES[route];
     return page ? refusalPage(c, page) : c.notFound();
   };

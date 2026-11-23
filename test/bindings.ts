@@ -1,4 +1,8 @@
-/** Fixed test values, so that tests do not depend on a local .dev.vars file. */
+/**
+ * Fixed test values, so that tests do not depend on a local .dev.vars file. The pool still loads
+ * that file; a key pinned here wins over it. `test/bindings.node.test.ts` fails if a string
+ * variable of `Env` is missing.
+ */
 export const TEST_BINDINGS = {
   ORG_NAME: "Example",
   ALLOWED_EMAILS: "owner@example.com,other@elsewhere.org",
@@ -8,6 +12,9 @@ export const TEST_BINDINGS = {
   SIGN_IN_PROVIDERS: "",
   PUBLIC_URL: "https://slotmirror.example.workers.dev",
   ALERT_WEBHOOK_URL: "https://alerts.example.com/hook",
+  HEARTBEAT_URL: "",
+  PRIVACY_CONTACT: "",
+  OPERATOR_NOTICE: "",
   // Alarms fire by themselves once due; long delays keep them under the tests' control.
   SYNC_DEBOUNCE_MS: "600000",
   SYNC_NEXT_RUN_MS: "600000",
@@ -15,7 +22,11 @@ export const TEST_BINDINGS = {
   // The /dev routes and the simulated calendars. A real token never reaches them.
   DEV_FAKE_CALENDARS: "1",
   DEV_FAKE_FETCH_URL: "https://probe-sink.example/",
+  DEV_FAKE_LATENCY_MS: "",
   DATA_JURISDICTION: "",
+  // Pinned empty: a local .dev.vars must not change the time zone or sign anyone in.
+  TIME_ZONE: "",
+  DEV_SIGN_IN_AS: "",
   MCP_ENABLED: "1",
   MCP_EVENTS_ENABLED: "1",
   MAX_DETAIL_TO_EXTERNAL: "title",
