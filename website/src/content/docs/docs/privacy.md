@@ -29,7 +29,7 @@ service between your calendars and your deployment.
 
 Event titles, descriptions, locations and attendees are read during a sync and kept only in
 memory. They are not written to D1 or to Durable Object storage. Blocks in a target
-calendar contain only what the detail level of the rule allows. The default is "Busy".
+calendar contain only what the level of the mirroring allows (**What is copied**). The default is "Busy".
 
 If the operator sets `MCP_EVENTS_ENABLED=1` and a user allows a token or app to read events, the
 MCP tool [`list_events`](/docs/mcp/#calendar-events) reads titles, times and locations in the same

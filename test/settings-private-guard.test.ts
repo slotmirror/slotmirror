@@ -84,12 +84,18 @@ describe("the private switch in a settings save", () => {
   });
 
   it("sets the default for new directions in both directions of the switch", async () => {
-    const { user, a, b, c, t } = await setup("pgdefault");
+    const { user, a, b, c, t, privateRule, openRule } = await setup("pgdefault");
+    const shownDefault = async () => (await loadEditorState(env, user.id)).settings.markPrivate;
+    // "Off" without a marker keeps the default too: it is no sign to open anything.
     await setSettings(env, user, { ...SETTINGS, markPrivate: false });
-    expect((await loadEditorState(env, user.id)).settings.markPrivate).toBe(false);
+    expect(await shownDefault()).toBe(true);
+    // "Off" with the marker of a switch shown on sets only the default.
+    await setSettings(env, user, { ...SETTINGS, markPrivate: false, markPrivateShown: true });
+    expect(await shownDefault()).toBe(false);
+    expect(await marksOf(user.id)).toEqual({ [privateRule]: true, [openRule]: false });
     await setDirection(env, user, c, t, "busy");
     await setSettings(env, user, { ...SETTINGS, markPrivate: true });
-    expect((await loadEditorState(env, user.id)).settings.markPrivate).toBe(true);
+    expect(await shownDefault()).toBe(true);
     await setDirection(env, user, a, b, "busy");
     const mark = (source: string, target: string) =>
       env.DB.prepare(
@@ -101,10 +107,13 @@ describe("the private switch in a settings save", () => {
     // The direction added while the switch was off became private with the second save.
     expect(await mark(c, t)).toBe(1);
     expect(await mark(a, b)).toBe(1);
-    await setSettings(env, user, { ...SETTINGS, markPrivate: false });
+    // "Open" for new mirrorings, the answer of the new panel, also sets only the default.
+    await setSettings(env, user, { ...SETTINGS, newWho: "open" });
+    expect(await shownDefault()).toBe(false);
     await setDirection(env, user, b, a, "busy");
     expect(await mark(b, a)).toBe(0);
     expect(await mark(a, b)).toBe(1);
+    expect(await mark(c, t)).toBe(1);
   });
 
   it("a save of other settings with the switch off keeps every mark", async () => {
@@ -139,6 +148,7 @@ describe("the private switch in a settings save", () => {
       expect(response.status).toBeLessThan(400);
       expect(await marksOf(user.id)).toEqual({ [privateRule]: true, [openRule]: false });
     }
-    expect((await loadEditorState(env, user.id)).settings.markPrivate).toBe(false);
+    // Without the checkbox the default stays as it was: the schema default, private.
+    expect((await loadEditorState(env, user.id)).settings.markPrivate).toBe(true);
   });
 });

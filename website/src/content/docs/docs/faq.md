@@ -39,8 +39,9 @@ under the AGPL-3.0. The MIT text is in the
 
 ## Can the people who see my work calendar read my private events?
 
-Not unless you choose so. In the group **Block each other**, each calendar sees the others only as
-"Busy", marked private. More detail is a choice per direction. Events marked private in the source
+Not unless you choose so. After **Mirror all as busy** on the **Mirroring** page, each calendar
+shows the others only as busy, and **What others see** is **Private event**. More detail is a
+choice per mirroring, under **What is copied**. Events marked private in the source
 never carry more than "Busy".
 
 ## What happens to a moved occurrence of a recurring meeting?

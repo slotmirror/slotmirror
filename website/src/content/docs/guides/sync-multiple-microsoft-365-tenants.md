@@ -24,19 +24,20 @@ blocks into your calendar in each tenant, so free/busy lookups in each tenant se
    any organizational directory and personal Microsoft accounts**. A single-tenant app cannot
    connect the second tenant.
 2. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and set `PUBLIC_URL`.
-3. Connect one account per tenant under **Accounts**. If a tenant blocks user consent, its admin
-   must grant consent to the app once.
-4. On the **Rules** page, add the calendars to the group **Block each other**.
-5. Choose **Save**.
+3. Connect one account per tenant on the **Calendars** page with **Connect calendar**. If a
+   tenant blocks user consent, its admin must grant consent to the app once.
+4. On the **Mirroring** page, choose **Mirror all as busy**. Each calendar then shows the events of
+   the others as busy.
 
-## Names on the Rules page
+## Names of the calendars
 
-slotmirror derives a short name from each address. You can rename an account, for example to the
-name of the company, so that the overview reads "from Company A to Company B".
+slotmirror derives a short name from each address. You can rename a calendar, for example to the
+name of the company, so that the **Mirroring** page reads "Company A to Company B". Open the panel
+of the calendar on the **Calendars** page, set **Name** and choose **Save**.
 
 ## Things to know
 
-- Each tenant sees only "Busy", marked private, unless you choose more detail per direction.
+- Each tenant sees only a private event, unless you choose more detail per mirroring.
 - If you sign in with one of the tenants and want only that tenant to sign in, see
   [Organisations](../../docs/organisations/).
 
@@ -49,12 +50,12 @@ admin must grant consent to the app once. See [Microsoft Entra app](../../docs/e
 
 ### Can I connect more than two tenants?
 
-Yes. Connect one account per tenant and add their calendars to the group **Block each other**.
+Yes. Connect one calendar per tenant. **Mirror all as busy** on the **Mirroring** page then covers all of them.
 
 ### Does one client see the meetings of another client?
 
-No, unless you choose more detail for that direction. By default each tenant sees only "Busy",
-marked private.
+No, unless you choose more detail for that mirroring. By default each tenant sees only a private
+event.
 
 ## Related guides
 

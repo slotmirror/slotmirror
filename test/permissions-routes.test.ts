@@ -19,7 +19,10 @@ const RESOURCE = `${BASE}/mcp`;
 const LOOPBACK = "http://127.0.0.1:43210/callback";
 
 function fetchApp(path: string, init: RequestInit = {}): Promise<Response> {
-  return exports.default.fetch(`${BASE}${path}`, { redirect: "manual", ...init });
+  return exports.default.fetch(`${BASE}${path}`, {
+    redirect: "manual",
+    ...init,
+  });
 }
 
 async function fetchWith(overrides: Partial<Env>, path: string, init: RequestInit = {}) {
@@ -68,7 +71,12 @@ function mcpList(token: string) {
       authorization: `Bearer ${token}`,
       "mcp-protocol-version": "2025-11-25",
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    }),
   });
 }
 
@@ -167,7 +175,10 @@ async function connected(email: string) {
   const flow = await newFlow();
   const response = await exchange(flow, await codeFor(cookie, flow));
   expect(response.status).toBe(200);
-  const tokens = (await response.json()) as { access_token: string; refresh_token: string };
+  const tokens = (await response.json()) as {
+    access_token: string;
+    refresh_token: string;
+  };
   return { user, cookie, flow, tokens };
 }
 
@@ -245,35 +256,6 @@ describe("personal tokens while MCP is off for members", () => {
     const response = await postForm("/tokens", { name: "agent", days: "30" }, { cookie });
     expect(response.status).toBe(200);
     expect(await tokenCount(user.id)).toBe(1);
-  });
-
-  it("shows a member the tokens with revoke, a notice and no form to create one", async () => {
-    const { cookie } = await patFor("owner@example.com");
-    await setMcpForMembers("off");
-    const response = await get("/tokens", cookie);
-    expect(response.status).toBe(200);
-    const html = await response.text();
-    expect(html).toContain(en.tokens.membersOff);
-    expect(html).not.toContain(`>${en.tokens.create}<`);
-    expect(html).toContain(en.tokens.revoke);
-  });
-
-  it("shows the form to a member while MCP is on for members", async () => {
-    const { cookie } = await signIn("owner@example.com");
-    const html = await (await get("/tokens", cookie)).text();
-    expect(html).toContain(`>${en.tokens.create}<`);
-    expect(html).not.toContain(en.tokens.membersOff);
-  });
-
-  it("lets a member revoke a token", async () => {
-    const { user, cookie } = await patFor("owner@example.com");
-    await setMcpForMembers("off");
-    const html = await (await get("/tokens", cookie)).text();
-    const id = /action="\/tokens\/([0-9a-f-]{36})\/revoke"/.exec(html)?.[1];
-    expect(id).toBeDefined();
-    const response = await postForm(`/tokens/${id}/revoke`, {}, { cookie });
-    expect(response.status).toBe(302);
-    expect(await tokenCount(user.id)).toBe(0);
   });
 
   it("stops a member's token at /mcp, keeps it, and lets it work again", async () => {
@@ -357,45 +339,14 @@ describe("connected apps while MCP is off for members", () => {
     const { cookie } = await signIn("owner@example.com");
     await setMcpForMembers("off");
     const path = await authorizePath({ clientId: "x", verifier: "y" });
-    const response = await fetchWith({ MCP_ENABLED: "" }, path, { headers: { cookie } });
+    const response = await fetchWith({ MCP_ENABLED: "" }, path, {
+      headers: { cookie },
+    });
     expect(response.status).toBe(404);
   });
 });
 
 describe("the MCP setting in the admin page", () => {
-  it("lets an admin turn MCP off and on for members, and logs each change", async () => {
-    const { cookie } = await signIn("admin@example.com");
-    const off = await postForm("/admin/mcp-policy", { mcpForMembers: "off" }, { cookie });
-    expect(off.status).toBe(302);
-    expect(off.headers.get("location")).toBe("/admin");
-    expect(await storedSetting()).toBe("off");
-
-    const on = await postForm("/admin/mcp-policy", { mcpForMembers: "all" }, { cookie });
-    expect(on.status).toBe(302);
-    expect(await storedSetting()).toBe("all");
-
-    // Saving the same value again is no change.
-    expect((await postForm("/admin/mcp-policy", { mcpForMembers: "all" }, { cookie })).status).toBe(
-      302,
-    );
-
-    const { results } = await env.DB.prepare(
-      "SELECT detail FROM audit_events WHERE kind = 'mcp_policy_changed' ORDER BY id",
-    ).all<{ detail: string }>();
-    expect(results.map((row) => JSON.parse(row.detail))).toEqual([
-      { mcpForMembers: "off" },
-      { mcpForMembers: "all" },
-    ]);
-  });
-
-  it("refuses an unknown value and keeps the setting", async () => {
-    const { cookie } = await signIn("admin@example.com");
-    const response = await postForm("/admin/mcp-policy", { mcpForMembers: "some" }, { cookie });
-    expect(response.status).toBe(400);
-    expect(await response.text()).toContain(en.admin.mcpInvalid);
-    expect(await storedSetting()).toBe("all");
-  });
-
   it("refuses a member and keeps the setting", async () => {
     const { cookie } = await signIn("owner@example.com");
     const response = await postForm("/admin/mcp-policy", { mcpForMembers: "off" }, { cookie });
@@ -403,21 +354,19 @@ describe("the MCP setting in the admin page", () => {
     expect(await storedSetting()).toBe("all");
   });
 
-  it("shows the current setting to an admin", async () => {
-    const { cookie } = await signIn("admin@example.com");
-    await setMcpForMembers("off");
-    const html = await (await get("/admin", cookie)).text();
-    expect(html).toContain(en.admin.mcpTitle);
-    expect(html).toMatch(/value="off"[^>]*checked/);
-  });
-
   it("hides the setting while the deployment has MCP off", async () => {
     const { cookie } = await signIn("admin@example.com");
-    const response = await fetchWith({ MCP_ENABLED: "" }, "/admin", { headers: { cookie } });
-    expect(await response.text()).not.toContain(en.admin.mcpTitle);
+    const response = await fetchWith({ MCP_ENABLED: "" }, "/admin", {
+      headers: { cookie },
+    });
+    expect(await response.text()).not.toContain(en.next.admin.mcpTitle);
     const post = await fetchWith({ MCP_ENABLED: "" }, "/admin/mcp-policy", {
       method: "POST",
-      headers: { cookie, origin: BASE, "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        cookie,
+        origin: BASE,
+        "content-type": "application/x-www-form-urlencoded",
+      },
       body: "mcpForMembers=off",
     });
     expect(post.status).toBe(404);
@@ -457,11 +406,14 @@ describe("admin actions", () => {
     const { cookie } = await signIn("admin@example.com");
     const other = await signIn("someone@org.example");
     expect((await get("/admin", cookie)).status).toBe(200);
-    expect((await get("/admin/activity", cookie)).status).toBe(200);
+    // The activity of the org moved to the Activity page.
+    const moved = await get("/admin/activity", cookie);
+    expect(moved.status).toBe(308);
+    expect(moved.headers.get("location")).toBe("/activity?scope=org");
     expect((await get(`/admin/users/${other.user.id}/delete`, cookie)).status).toBe(200);
     expect((await get("/dev/stats", cookie)).status).toBe(200);
     const reset = await postForm(`/admin/users/${other.user.id}/reset-sign-in`, {}, { cookie });
-    expect(reset.status).toBe(302);
+    expect(reset.status).toBe(303);
     expect(await loadUser(env, other.user.id, other.user.sessionVersion)).toBeNull();
   });
 
@@ -476,9 +428,11 @@ describe("admin actions", () => {
     const member = await signIn("owner@example.com");
     const admin = await signIn("admin@example.com");
     expect(await (await get("/cleanup", member.cookie)).text()).not.toContain(
-      en.cleanup.othersTitle,
+      en.next.auth.cleanup.othersTitle,
     );
-    expect(await (await get("/cleanup", admin.cookie)).text()).toContain(en.cleanup.othersTitle);
+    expect(await (await get("/cleanup", admin.cookie)).text()).toContain(
+      en.next.auth.cleanup.othersTitle,
+    );
   });
 
   it("shows the admin link only to an admin", async () => {

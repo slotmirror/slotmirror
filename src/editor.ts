@@ -1,7 +1,8 @@
+import type { Query } from "./batch";
 import { auditStatement, recordAudit, type AuditEvent } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
-import { detailLevelFor, type DetailLevel } from "./detail-policy";
+import { detailLevelFor, type AccountIdentity, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
 import { displayTimeZone } from "./i18n";
 import { carrier, log } from "./telemetry";
@@ -29,11 +30,70 @@ export type Choice = "off" | "busy" | "title" | "full";
 
 export const CHOICES: readonly Choice[] = ["off", "busy", "title", "full"];
 
+/**
+ * What a direction shows, as the editor offers it: a detail level, and for every copied level
+ * whether the copies carry the private mark. Others then see a private item (Microsoft) or "busy"
+ * (Google) instead of the copy's title. Storage stays `detailLevel` plus `markPrivate`.
+ */
+export type Level =
+  | "off"
+  | "busy-private"
+  | "busy-open"
+  | "title-private"
+  | "title-open"
+  | "full-private"
+  | "full-open";
+
+export const LEVELS: readonly Level[] = [
+  "off",
+  "busy-private",
+  "busy-open",
+  "title-private",
+  "title-open",
+  "full-private",
+  "full-open",
+];
+
+/** A direction's level from its detail level and private mark. Off carries no mark. */
+export function levelOf(choice: Choice, markPrivate: boolean): Level {
+  if (choice === "off") return choice;
+  return `${choice}-${markPrivate ? "private" : "open"}`;
+}
+
+/**
+ * Read a choice of the editor: a level, or a bare detail level, which keeps the mark of the
+ * direction (see `setDirections`). Off takes no mark. Anything else is null.
+ */
+export function parseLevel(value: string): { choice: Choice; markPrivate?: boolean } | null {
+  if ((CHOICES as readonly string[]).includes(value)) return { choice: value as Choice };
+  const [choice, mark, ...rest] = value.split("-");
+  if (rest.length > 0 || (choice !== "busy" && choice !== "title" && choice !== "full")) {
+    return null;
+  }
+  if (mark === "private") return { choice, markPrivate: true };
+  if (mark === "open") return { choice, markPrivate: false };
+  return null;
+}
+
+/**
+ * The mark of a direction's copies as one answer: true only if every enabled rule of the direction
+ * is private, so that a direction with mixed marks shows the more visible state. Null if no rule
+ * is enabled; the caller then decides, usually from the user's default.
+ */
+export function directionMarksPrivate(direction: Pick<EditorDirection, "slots">): boolean | null {
+  const marks = direction.slots.flatMap((slot) =>
+    slot.rule?.enabled ? [slot.rule.options.markPrivate] : [],
+  );
+  return marks.length === 0 ? null : marks.every(Boolean);
+}
+
 export interface EditorAccount {
   id: string;
   provider: Provider;
   email: string;
   tenantId: string | null;
+  /** When the account was connected, as stored (an ISO time). */
+  createdAt: string;
   inGroup: boolean;
   /** The provider refused the refresh token; nothing syncs until the user connects again. */
   needsReconnect: boolean;
@@ -53,6 +113,11 @@ export interface EditorAccount {
   calendars: { id: string; name: string; isMain: boolean; isSource: boolean }[];
   /** Working hours of the account (see `setAccountWorkHours`); null if it has none. */
   workHours: AccountWorkHours | null;
+  /**
+   * The working hours as stored, for a write that must find them unchanged. Optional, so that a
+   * state built by hand without it still type-checks; such a state guards nothing here.
+   */
+  workHoursJson?: string | null;
   /** Options of the account as a source (see `SourceOptions`); null if it never stored any. */
   sourceOptions: SourceOptions | null;
 }
@@ -101,10 +166,20 @@ export type SyncSettings = Pick<
   "daysAhead" | "skipAllDay" | "skipTentative" | "markPrivate" | "blockTitle" | "skipCategories"
 >;
 
+/** The settings of the editor state: the stored ones, and whether a block title is among them. */
+export type EditorSettings = SyncSettings & {
+  /**
+   * True if `users.sync_settings` holds a block title. If not, `blockTitle` is the schema default,
+   * and a page shows the default of the user's language instead (see `withLocalizedTitle`).
+   * `parseEditorState` always sets it; a stub state without it counts as stored.
+   */
+  blockTitleStored?: boolean;
+};
+
 export interface EditorState {
   accounts: EditorAccount[];
   directions: EditorDirection[];
-  settings: SyncSettings;
+  settings: EditorSettings;
   /** Rules that do not run between two main calendars. The editor lists them, so none hides. */
   others: { ruleId: string; source: string; target: string; choice: Choice }[];
   /** Every rule of the user, with its source and target account, for changes per account. */
@@ -152,6 +227,7 @@ interface AccountRow {
   provider: Provider;
   email: string;
   tenantId: string | null;
+  createdAt: string;
   inGroup: number;
   displayName: string | null;
   needsReconnect: number;
@@ -183,32 +259,74 @@ interface RuleRow {
   targetAccountId: string;
 }
 
-/** The editor state. One batch reads it, which counts as one D1 query per invocation. */
-export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
-  const [accountResult, calendarResult, ruleResult, settingsResult] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT id, provider, email, tenant_id AS tenantId, in_block_group AS inGroup,
+/**
+ * The four reads of the editor state, for one D1 batch. A page that needs more than the state puts
+ * these statements into its own batch and hands the results to `parseEditorState`.
+ */
+export function editorStatements(db: D1Database, userId: string): D1PreparedStatement[] {
+  return [
+    db
+      .prepare(
+        `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt,
+              in_block_group AS inGroup,
               display_name AS displayName, needs_reconnect AS needsReconnect, color,
               work_hours AS workHours, source_options AS sourceOptions
        FROM accounts WHERE user_id = ? ORDER BY created_at, id`,
-    ).bind(userId),
-    env.DB.prepare(
-      `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
+      )
+      .bind(userId),
+    db
+      .prepare(
+        `SELECT c.id, c.account_id AS accountId, c.remote_id AS remoteId, c.name,
               c.can_edit AS canEdit, c.is_default AS isMain, c.is_source AS isSource
        FROM calendars c JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ? ORDER BY c.is_default DESC, c.name`,
-    ).bind(userId),
-    env.DB.prepare(
-      `SELECT r.id, r.source_calendar_id AS sourceId, r.target_calendar_id AS targetId, r.options,
+      )
+      .bind(userId),
+    db
+      .prepare(
+        `SELECT r.id, r.source_calendar_id AS sourceId, r.target_calendar_id AS targetId, r.options,
               r.enabled, r.origin, sc.name AS sourceName, sc.account_id AS sourceAccountId,
               tc.name AS targetName, tc.account_id AS targetAccountId
        FROM rules r
        JOIN calendars sc ON sc.id = r.source_calendar_id
        JOIN calendars tc ON tc.id = r.target_calendar_id
        WHERE r.user_id = ?`,
-    ).bind(userId),
-    env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?").bind(userId),
-  ]);
+      )
+      .bind(userId),
+    db.prepare("SELECT sync_settings AS json FROM users WHERE id = ?").bind(userId),
+  ];
+}
+
+/** `editorStatements` and `parseEditorState` as a query for a batch (see `src/batch.ts`). */
+export function editorQuery(
+  env: Env,
+  userId: string,
+): Query<{ state: EditorState; colorWrites: D1PreparedStatement[] }> {
+  return {
+    statements: editorStatements(env.DB, userId),
+    parse: (results) => parseEditorState(env, results),
+  };
+}
+
+/** The editor state. One batch reads it, which counts as one D1 query per invocation. */
+export async function loadEditorState(env: Env, userId: string): Promise<EditorState> {
+  const results = await env.DB.batch(editorStatements(env.DB, userId));
+  const { state, colorWrites } = parseEditorState(env, results);
+  if (colorWrites.length > 0) await env.DB.batch(colorWrites);
+  return state;
+}
+
+/**
+ * The editor state from the results of `editorStatements`. It writes nothing. Accounts without a
+ * stored colour get the next unused one for display; `colorWrites` holds the statements that store
+ * them, so that they stay when another account gets a colour later. Run them only if the list is
+ * not empty: that is rare, and not part of the page's batch.
+ */
+export function parseEditorState(
+  env: Env,
+  results: D1Result[],
+): { state: EditorState; colorWrites: D1PreparedStatement[] } {
+  const [accountResult, calendarResult, ruleResult, settingsResult] = results;
   const accountRows = (accountResult?.results ?? []) as AccountRow[];
   const calendarRows = (calendarResult?.results ?? []) as CalendarRow[];
   const ruleRows = (ruleResult?.results ?? []) as RuleRow[];
@@ -221,18 +339,16 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
     calendarById.get(row.sourceId)?.isSource === 0;
   const names = shortNames(accountRows.map((row) => row.email));
   const colors = resolveAccountColorState(accountRows.map((row) => row.color));
-  // Store assigned colours, so that they stay when another account gets a colour later.
-  const assigned = accountRows.filter((row, index) => colors[index]?.stored !== row.color);
-  if (assigned.length > 0) {
-    await env.DB.batch(
-      assigned.map((row) =>
-        env.DB.prepare("UPDATE accounts SET color = ? WHERE id = ?").bind(
-          colors[accountRows.indexOf(row)]?.stored ?? null,
-          row.id,
-        ),
+  // Assigned colours are stored by the caller, so that they stay when another account gets a
+  // colour later.
+  const colorWrites = accountRows
+    .filter((row, index) => colors[index]?.stored !== row.color)
+    .map((row) =>
+      env.DB.prepare("UPDATE accounts SET color = ? WHERE id = ?").bind(
+        colors[accountRows.indexOf(row)]?.stored ?? null,
+        row.id,
       ),
     );
-  }
   const accounts: EditorAccount[] = accountRows.map((row, index) => {
     const own = calendarRows.filter((calendar) => calendar.accountId === row.id);
     const main = own.find((calendar) => calendar.isMain === 1);
@@ -242,6 +358,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       provider: row.provider,
       email: row.email,
       tenantId: row.tenantId,
+      createdAt: row.createdAt,
       inGroup: row.inGroup === 1,
       needsReconnect: row.needsReconnect === 1,
       name: row.displayName ?? derivedName,
@@ -258,6 +375,7 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
         isSource: calendar.isSource === 1,
       })),
       workHours: parseAccountHours(row.workHours),
+      workHoursJson: row.workHours,
       sourceOptions: parseSourceOptions(row.sourceOptions),
     };
   });
@@ -353,8 +471,40 @@ export async function loadEditorState(env: Env, userId: string): Promise<EditorS
       optionsJson: row.options,
     },
   }));
-  const settings = { ...parseSettings(json), daysAhead, skipAllDay };
-  return { accounts, directions, others, rules, settings };
+  const settings = {
+    ...parseSettings(json),
+    daysAhead,
+    skipAllDay,
+    blockTitleStored: hasStoredBlockTitle(json),
+  };
+  return { state: { accounts, directions, others, rules, settings }, colorWrites };
+}
+
+/** True if the stored settings hold a block title, whatever its value. */
+function hasStoredBlockTitle(json: string): boolean {
+  try {
+    return (JSON.parse(json) as { blockTitle?: unknown }).blockTitle !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The state with the block title a page shows. A user who stored no title and has no rules sees the
+ * default of their language, `title`, because their first rule will get it (see
+ * `setDefaultBlockTitle`). A stored title always shows as stored, also "Busy". A user with rules
+ * and no stored title keeps the schema default, which their rules carry.
+ */
+export function withLocalizedTitle(state: EditorState, title: string): EditorState {
+  const { settings } = state;
+  if (
+    settings.blockTitleStored !== false ||
+    state.rules.length > 0 ||
+    settings.blockTitle === title
+  ) {
+    return state;
+  }
+  return { ...state, settings: { ...settings, blockTitle: title } };
 }
 
 /**
@@ -399,7 +549,75 @@ export type SettingsForm = Omit<SyncSettings, "daysAhead"> & {
   daysAheadShown?: number;
   /** The all-day switch that the form showed. */
   skipAllDayShown?: boolean;
+  /**
+   * The private switch that the form showed. Unless the switch turned on, each rule keeps its own
+   * value, which the editor sets per direction. See `markPrivateScope`.
+   */
+  markPrivateShown?: boolean;
+  /**
+   * Who sees new mirrorings: "private" (only you) or "open" (everyone with access). It sets the
+   * default for new mirrorings. If present, `markPrivate` and `markPrivateShown` do not count.
+   */
+  newWho?: "private" | "open";
+  /** With `newWho`: also give every existing rule that value. Without `newWho` it does nothing. */
+  applyWho?: boolean;
 };
+
+/**
+ * What a settings save does with the private mark:
+ * - "keep": the default and every rule keep their mark.
+ * - "default": only the default for new mirrorings changes.
+ * - "all": the default and every rule change, except rules whose level set a mark in the same save.
+ *
+ * `newWho` decides if present. Without it, the old switch counts, and it is asymmetric, because the
+ * old forms send no sign that the user meant to apply it to all rules. "On" goes to all rules,
+ * because it can only narrow. With `markPrivateShown`, an unchanged "on" and any "off" set only the
+ * default. Without that marker, the form is a page from before the marker or a form without the
+ * switch: a missing "on" changes nothing, so an absent checkbox never makes a copy more visible.
+ */
+export function markPrivateScope(
+  form: Pick<SettingsForm, "markPrivate" | "markPrivateShown" | "newWho" | "applyWho">,
+): { scope: "keep" | "default" | "all"; markPrivate: boolean } {
+  if (form.newWho === "private" || form.newWho === "open") {
+    const markPrivate = form.newWho === "private";
+    return { scope: form.applyWho === true ? "all" : "default", markPrivate };
+  }
+  const { markPrivate, markPrivateShown } = form;
+  if (markPrivateShown !== undefined) {
+    // Only a switch turned on reaches every rule. "Off" never opens an existing rule.
+    return { scope: markPrivate && !markPrivateShown ? "all" : "default", markPrivate };
+  }
+  return { scope: markPrivate ? "all" : "keep", markPrivate };
+}
+
+/**
+ * How many mirrorings it would widen or narrow to give every rule the mark of `who`, as a
+ * settings save with `applyWho` does. A mirroring is a direction, or a rule under "Other rules".
+ * Only enabled rules count, because a disabled rule writes no copies. A mirroring widens if any of
+ * its rules is private and the value is "open"; it narrows if any is open and the value is
+ * "private". So a mirroring with mixed marks counts in both directions.
+ */
+export function visibilityEffect(
+  state: Pick<EditorState, "directions" | "others" | "rules">,
+  who: "private" | "open",
+): { widened: number; narrowed: number } {
+  const markPrivate = who === "private";
+  const mirrorings = [
+    ...state.directions.map((direction) =>
+      direction.slots.flatMap((slot) =>
+        slot.rule?.enabled ? [slot.rule.options.markPrivate] : [],
+      ),
+    ),
+    ...state.others.map((other) =>
+      state.rules
+        .filter(({ rule }) => rule.id === other.ruleId && rule.enabled)
+        .map(({ rule }) => rule.options.markPrivate),
+    ),
+  ];
+  // Mirrorings with a rule whose mark the value would change.
+  const changed = mirrorings.filter((marks) => marks.some((mark) => mark !== markPrivate)).length;
+  return markPrivate ? { widened: 0, narrowed: changed } : { widened: changed, narrowed: 0 };
+}
 
 /** Options of a new rule: the user's settings with the given detail level. */
 function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOptions {
@@ -416,23 +634,41 @@ function newRuleOptions(settings: SyncSettings, detailLevel: Choice): RuleOption
  * lower one lowers the rules above it. The other rules keep their own. A smaller window queues the
  * removal of the blocks beyond it, which no run reads any more. The all-day switch applies only if
  * the user changed it from the one the form showed; then every rule follows. Otherwise each rule
- * keeps its own value, because a rule that turns to skipping loses its all-day blocks. The
- * private switch is asymmetric, because a rule can carry its own mark and the form sends no sign
- * that the user meant to apply the switch to all rules: "on" marks every rule private, which can
- * only narrow; "off" sets only the default for new rules, and every rule keeps its mark. So a
- * settings save never makes a copy more visible. Throws `EditorConflict` if a rule changed since
- * the read; then nothing is stored.
+ * keeps its own value, because a rule that turns to skipping loses its all-day blocks. The private
+ * mark goes to the default or to every rule as `markPrivateScope` says, because the editor sets the
+ * mark per direction. Only "on" or an explicit `applyWho` reaches every rule, so a settings save
+ * never makes a copy more visible unless the user asked for that. Throws `EditorConflict` if a rule
+ * changed since the read; then nothing is stored.
  */
 export async function setSettings(
   env: Env,
   user: CurrentUser,
   form: SettingsForm,
   syncs?: Set<string>,
+  /**
+   * Rules "sourceCalendarId>targetCalendarId" whose mark a level of the same save set, as
+   * `setDirections` returns them. A switched mark skips them.
+   */
+  keepMarks: ReadonlySet<string> = new Set(),
+  /**
+   * A state the caller read and checked in this request, for example against the version of the
+   * form. If the rules or the settings that this function reads differ from it, nothing is
+   * written and `EditorConflict` is thrown. The batch then also writes the settings row only if it
+   * is still as this function read it, so a save between that read and the batch fails it too.
+   * Changes of the org caps or of account names in that window are not checked.
+   */
+  checked?: EditorState,
 ): Promise<void> {
   const { results } = await env.DB.prepare(
     `SELECT r.id, r.options, r.enabled, tc.can_edit AS canEdit, tc.account_id AS targetAccountId,
-            tc.remote_id AS remoteCalendarId
-     FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id WHERE r.user_id = ?`,
+            tc.remote_id AS remoteCalendarId, r.source_calendar_id AS sourceCalendarId,
+            r.target_calendar_id AS targetCalendarId, sc.account_id AS sourceAccountId,
+            sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+            ta.email AS targetEmail, ta.tenant_id AS targetTenantId
+     FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id JOIN accounts ta ON ta.id = tc.account_id
+     WHERE r.user_id = ?`,
   )
     .bind(user.id)
     .all<{
@@ -442,6 +678,13 @@ export async function setSettings(
       canEdit: number;
       targetAccountId: string;
       remoteCalendarId: string;
+      sourceCalendarId: string;
+      targetCalendarId: string;
+      sourceAccountId: string;
+      sourceEmail: string;
+      sourceTenantId: string | null;
+      targetEmail: string;
+      targetTenantId: string | null;
     }>();
   const stored = await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
     .bind(user.id)
@@ -450,7 +693,34 @@ export async function setSettings(
   const ruleOptions = results.map((row) => parseRuleOptions(row.options));
   const current = shownDaysAhead(json, ruleOptions);
   const currentSkipAllDay = shownSkipAllDay(json, ruleOptions);
-  const { daysAhead: chosen, daysAheadShown, skipAllDayShown, skipAllDay, ...rest } = form;
+  if (checked) {
+    // The same rules with the same options, and the same settings as `parseEditorState` shows.
+    const read = new Map(results.map((row) => [row.id, `${row.enabled}:${row.options}`]));
+    const seen = new Map(
+      checked.rules.map(({ rule }) => [rule.id, `${rule.enabled ? 1 : 0}:${rule.optionsJson}`]),
+    );
+    const sameRules = read.size === seen.size && [...read].every(([id, v]) => seen.get(id) === v);
+    const shownNow = {
+      ...parseSettings(json),
+      daysAhead: current,
+      skipAllDay: currentSkipAllDay,
+      blockTitleStored: hasStoredBlockTitle(json),
+    };
+    if (!sameRules || JSON.stringify(shownNow) !== JSON.stringify(checked.settings)) {
+      throw new EditorConflict();
+    }
+  }
+  const {
+    daysAhead: chosen,
+    daysAheadShown,
+    skipAllDayShown,
+    markPrivateShown: _markPrivateShown,
+    newWho: _newWho,
+    applyWho: _applyWho,
+    skipAllDay,
+    ...rest
+  } = form;
+  const mark = markPrivateScope(form);
   // A page from before `daysAheadShown` existed showed the stored window, or the default.
   const shown = daysAheadShown ?? parseSettings(json).daysAhead;
   const windowChanged = chosen !== undefined && chosen !== shown;
@@ -460,6 +730,7 @@ export async function setSettings(
     ...rest,
     daysAhead: windowChanged ? chosen : current,
     skipAllDay: skipAllDayChanged ? skipAllDay : currentSkipAllDay,
+    markPrivate: mark.scope === "keep" ? parseSettings(json).markPrivate : mark.markPrivate,
   };
   const windowOf = (previous: number) =>
     !windowChanged
@@ -469,32 +740,58 @@ export async function setSettings(
         : Math.min(previous, settings.daysAhead);
   // One batch, so that the save stores all changes or none, and stays within the D1 queries of one
   // invocation however many rules the user has.
-  const updates: D1PreparedStatement[] = [
-    env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?").bind(
-      JSON.stringify(settings),
-      user.id,
-    ),
-  ];
+  const updates: D1PreparedStatement[] = checked
+    ? [
+        // Only over the settings that were checked: another save after this read fails the batch.
+        env.DB.prepare(
+          "UPDATE users SET sync_settings = ? WHERE id = ? AND sync_settings IS ?",
+        ).bind(JSON.stringify(settings), user.id, stored?.json ?? null),
+        requireChange(env),
+      ]
+    : [
+        env.DB.prepare("UPDATE users SET sync_settings = ? WHERE id = ?").bind(
+          JSON.stringify(settings),
+          user.id,
+        ),
+      ];
   const trims = new Map<string, { ruleId: string; remoteCalendarId: string }[]>();
+  /** A row per rule whose mark this save changed, so each mirroring keeps a trace of it. */
+  const markChanges: AuditEvent[] = [];
   for (const row of results) {
     const previous = parseRuleOptions(row.options);
+    const keepMark = keepMarks.has(`${row.sourceCalendarId}>${row.targetCalendarId}`);
     const options = ruleOptionsSchema.parse({
       ...previous,
       ...settings,
       daysAhead: windowOf(previous.daysAhead),
       skipAllDay: skipAllDayChanged ? settings.skipAllDay : previous.skipAllDay,
-      markPrivate: settings.markPrivate || previous.markPrivate,
+      markPrivate: mark.scope === "all" && !keepMark ? mark.markPrivate : previous.markPrivate,
     });
     // A parked exception stays parked. A rule that changed since the read fails the batch.
     const stored = isMarkedParked(row.options) ? { ...options, parked: true } : options;
     updates.push(
-      env.DB.prepare("UPDATE rules SET options = ? WHERE id = ? AND options = ?").bind(
-        JSON.stringify(stored),
-        row.id,
-        row.options,
-      ),
+      env.DB.prepare(
+        "UPDATE rules SET options = ? WHERE id = ? AND options = ? AND enabled = ?",
+      ).bind(JSON.stringify(stored), row.id, row.options, row.enabled),
       requireChange(env),
     );
+    // "For all mirrorings" can change what others see of a mirroring's copies: the row names the
+    // level before and after, like a save of the mirroring. A disabled rule copies nothing.
+    if (row.enabled === 1 && options.markPrivate !== previous.markPrivate) {
+      markChanges.push({
+        orgId: user.orgId,
+        userId: user.id,
+        accountId: row.targetAccountId,
+        ruleId: row.id,
+        kind: "rule_updated",
+        detail: {
+          // With the org caps, as the sync applies them: never a wider level than the copies get.
+          ...cappedLevelAuditDetail(env, options, true, ...identities(row)),
+          ...previousDetail(cappedLevelOfRule(env, previous, true, ...identities(row))),
+          ...fromAccountDetail(row.sourceAccountId),
+        },
+      });
+    }
     // A disabled rule has its blocks removed already; a read-only calendar refuses the deletes.
     if (options.daysAhead < previous.daysAhead && row.enabled === 1 && row.canEdit === 1) {
       const queue = trims.get(row.targetAccountId) ?? [];
@@ -511,7 +808,7 @@ export async function setSettings(
       log.error("removal.trim_queue_failed", { accountId }, error);
     }
   }
-  await recordAudit(env.DB, {
+  const settingsChanged: AuditEvent = {
     orgId: user.orgId,
     userId: user.id,
     kind: "settings_changed",
@@ -523,7 +820,18 @@ export async function setSettings(
       markPrivate: settings.markPrivate,
       skipCategories: settings.skipCategories.length,
     },
-  });
+  };
+  if (markChanges.length === 0) await recordAudit(env.DB, settingsChanged);
+  else {
+    // One batch for the rows; the change is done, so a broken log must not fail the request.
+    try {
+      await env.DB.batch(
+        [...markChanges, settingsChanged].map((event) => auditStatement(env.DB, event)),
+      );
+    } catch (error) {
+      log.error("audit.write_failed", { auditKind: "settings_changed" }, error);
+    }
+  }
   await requestSyncs(env, new Set(results.map((row) => row.targetAccountId)), syncs);
 }
 
@@ -540,6 +848,11 @@ export async function renameAccount(
   user: CurrentUser,
   accountId: string,
   name: string,
+  /**
+   * The account as the caller read and checked it in this request. The name is then written only
+   * if it is still the one of that read; otherwise `EditorConflict` is thrown.
+   */
+  checked?: EditorAccount,
 ): Promise<void> {
   const { results } = await env.DB.prepare(
     `SELECT id, email, display_name AS displayName FROM accounts WHERE user_id = ?
@@ -554,9 +867,20 @@ export async function renameAccount(
   const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
   const stored = trimmed === "" || trimmed === derived ? null : trimmed;
   if (stored === row.displayName) return;
-  await env.DB.prepare("UPDATE accounts SET display_name = ? WHERE id = ? AND user_id = ?")
-    .bind(stored, accountId, user.id)
-    .run();
+  if (checked) {
+    // `customName` is null for no name and for a stored name equal to the derived one.
+    const updated = await env.DB.prepare(
+      `UPDATE accounts SET display_name = ?1 WHERE id = ?2 AND user_id = ?3
+         AND (display_name IS ?4 OR (?4 IS NULL AND display_name = ?5))`,
+    )
+      .bind(stored, accountId, user.id, checked.customName, checked.derivedName)
+      .run();
+    if (updated.meta.changes === 0) throw new EditorConflict();
+  } else {
+    await env.DB.prepare("UPDATE accounts SET display_name = ? WHERE id = ? AND user_id = ?")
+      .bind(stored, accountId, user.id)
+      .run();
+  }
   if ((stored ?? derived) === (row.displayName ?? derived)) return;
   // The name is the user's own label; the log records that it changed, not the name.
   await recordAudit(env.DB, {
@@ -576,7 +900,24 @@ export async function setAccountColor(
   user: CurrentUser,
   accountId: string,
   color: AccountColor | null,
+  /**
+   * The account as the caller read and checked it in this request. The colour is then written
+   * only if it is still the one of that read; otherwise `EditorConflict` is thrown.
+   */
+  checked?: EditorAccount,
 ): Promise<boolean> {
+  if (checked) {
+    // As `resolveAccountColorState` stores them: a chosen colour by its key, an automatic one
+    // with the prefix "auto:" (the editor read stores the assigned ones).
+    const before = checked.colorChosen ? checked.color : `auto:${checked.color}`;
+    const updated = await env.DB.prepare(
+      "UPDATE accounts SET color = ? WHERE id = ? AND user_id = ? AND color IS ?",
+    )
+      .bind(color, accountId, user.id, before)
+      .run();
+    if (updated.meta.changes === 0) throw new EditorConflict();
+    return true;
+  }
   const updated = await env.DB.prepare("UPDATE accounts SET color = ? WHERE id = ? AND user_id = ?")
     .bind(color, accountId, user.id)
     .run();
@@ -647,29 +988,75 @@ export function accountWorkHours(
  * rules into other calendars of the account. The account and its rules change in one batch.
  * Returns false if the account is not the user's. Throws `EditorConflict` if a rule changed since
  * the read.
+ *
+ * `switchOn` names source accounts whose mirrorings into this account start to use the new hours
+ * too ("only in working hours" on), in the same batch. So a failure between the hours and the
+ * switch cannot leave the hours stored and the mirrorings off, and a retry completes. With hours
+ * that did not change, only the switch is written. `state` is a state the caller read in this
+ * request; the guards on the rules still catch a change made meanwhile. `syncs` collects the
+ * accounts to sync instead of asking at once.
  */
 export async function setAccountWorkHours(
   env: Env,
   user: CurrentUser,
   accountId: string,
   hours: AccountWorkHours | null,
+  options: {
+    switchOn?: readonly string[];
+    syncs?: Set<string>;
+    /**
+     * A state the caller read and checked in this request. The rules are written only if they
+     * are as in that state, and the account's hours only if they are as stored then; otherwise
+     * `EditorConflict` is thrown and nothing of this batch is stored.
+     */
+    state?: EditorState;
+  } = {},
 ): Promise<boolean> {
-  const state = await loadEditorState(env, user.id);
+  const state = options.state ?? (await loadEditorState(env, user.id));
   const account = state.accounts.find((a) => a.id === accountId);
   if (!account) return false;
-  if (hoursKey(account.workHours ?? NO_WORKING_HOURS) === hoursKey(hours ?? NO_WORKING_HOURS)) {
-    return true;
+  const changed =
+    hoursKey(account.workHours ?? NO_WORKING_HOURS) !== hoursKey(hours ?? NO_WORKING_HOURS);
+  const switchOn = new Set(hours ? (options.switchOn ?? []) : []);
+  if (!changed && switchOn.size === 0) return true;
+  const patches: RulePatch[] = [];
+  if (changed) {
+    for (const { from, to, rule } of state.rules) {
+      if (to === accountId && hasWorkingHours(rule.options)) {
+        patches.push({ from, to, rule, patch: hours ?? NO_WORKING_HOURS });
+      }
+    }
   }
-  const patches = state.rules
-    .filter(({ to, rule }) => to === accountId && hasWorkingHours(rule.options))
-    .map(({ to, rule }) => ({ to, rule, patch: hours ?? NO_WORKING_HOURS }));
-  await writePatches(env, user, patches, [
-    env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ? AND user_id = ?").bind(
-      hours ? JSON.stringify(hours) : null,
-      accountId,
-      user.id,
-    ),
-  ]);
+  if (hours) {
+    for (const direction of state.directions) {
+      if (direction.to !== accountId || !switchOn.has(direction.from)) continue;
+      for (const { rule } of direction.slots) {
+        if (rule) patches.push({ from: direction.from, to: accountId, rule, patch: hours });
+      }
+    }
+  }
+  await writePatches(
+    env,
+    user,
+    patches,
+    !changed
+      ? []
+      : options.state && account.workHoursJson !== undefined
+        ? [
+            env.DB.prepare(
+              "UPDATE accounts SET work_hours = ? WHERE id = ? AND user_id = ? AND work_hours IS ?",
+            ).bind(hours ? JSON.stringify(hours) : null, accountId, user.id, account.workHoursJson),
+            requireChange(env),
+          ]
+        : [
+            env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ? AND user_id = ?").bind(
+              hours ? JSON.stringify(hours) : null,
+              accountId,
+              user.id,
+            ),
+          ],
+    options.syncs,
+  );
   return true;
 }
 
@@ -891,15 +1278,21 @@ export async function setRuleDetails(
   user: CurrentUser,
   details: RuleDetails,
   syncs?: Set<string>,
+  /**
+   * A state the caller read and checked in this request. The rules are then patched only if
+   * their options and on/off state are as in that read; otherwise `EditorConflict` is thrown and
+   * nothing of the batch is stored. The source options on the account row have no such guard.
+   */
+  checked?: EditorState,
 ): Promise<boolean> {
-  const state = await loadEditorState(env, user.id);
+  const state = checked ?? (await loadEditorState(env, user.id));
   const problem = ruleDetailsProblem(state, details);
   if (problem && problem.kind !== "direction" && problem.kind !== "noWorkHours") return false;
   const patches: RulePatch[] = [];
   const accounts: D1PreparedStatement[] = [];
   const forDirection = (direction: EditorDirection, patch: Partial<RuleOptions>) => {
     for (const { rule } of direction.slots) {
-      if (rule) patches.push({ to: direction.to, rule, patch });
+      if (rule) patches.push({ from: direction.from, to: direction.to, rule, patch });
     }
   };
   for (const { from, to, value } of details.colors ?? []) {
@@ -913,7 +1306,9 @@ export async function setRuleDetails(
     if (!current) continue;
     // Every rule from the account: those of its directions, parked ones and manual ones.
     for (const entry of state.rules) {
-      if (entry.from === from) patches.push({ to: entry.to, rule: entry.rule, patch: options });
+      if (entry.from === from) {
+        patches.push({ from, to: entry.to, rule: entry.rule, patch: options });
+      }
     }
     // json_patch merges into what the account has, so that a concurrent save of another source
     // option keeps its value. An account without stored options, or with broken ones, starts from
@@ -953,8 +1348,12 @@ export async function setBlockColor(
   return setRuleDetails(env, user, { colors: [{ from: fromId, to: toId, value }] }, syncs);
 }
 
-/** A change of the options of one rule into account `to`. Patches of a rule apply in order. */
+/**
+ * A change of the options of one rule from account `from` into account `to`. Patches of a rule
+ * apply in order.
+ */
 interface RulePatch {
+  from: string;
   to: string;
   rule: SlotRule;
   patch: Partial<RuleOptions>;
@@ -1027,34 +1426,19 @@ async function writePatches(
   }
   const statements = [...before];
   const targets = new Set<string>();
-  for (const { to, rule, patch } of merged.values()) {
+  for (const { from, to, rule, patch } of merged.values()) {
     const parsed = ruleOptionsSchema.safeParse({ ...rule.options, ...patch });
     if (!parsed.success) continue;
     const options = parsed.data;
-    const old = rule.options;
-    const detail: Record<string, string> = {};
-    // The category name is the user's own word; the log records that the colour changed.
-    if (options.blockColor !== old.blockColor) detail.blockColor = "changed";
-    // Category names are the user's own words too; the log keeps the count.
-    if (options.onlyCategories.join("\u0000") !== old.onlyCategories.join("\u0000")) {
-      detail.onlyCategories = String(options.onlyCategories.length);
-    }
-    if (options.bufferBefore !== old.bufferBefore || options.bufferAfter !== old.bufferAfter) {
-      detail.bufferBefore = String(options.bufferBefore);
-      detail.bufferAfter = String(options.bufferAfter);
-    }
-    if (hoursKey(options) !== hoursKey(old)) {
-      detail.workDays = options.workDays.join(",");
-      detail.workStart = options.workStart;
-      detail.workEnd = options.workEnd;
-      detail.workTimeZone = options.workTimeZone;
-    }
-    if (Object.keys(detail).length === 0) continue;
+    const changes = detailChanges(rule.options, options);
+    if (Object.keys(changes).length === 0) continue;
+    // The source account names the mirroring once the rule is gone (see `fromAccountDetail`).
+    const detail = { ...changes, ...fromAccountDetail(from) };
     const stored = isMarkedParked(rule.optionsJson) ? { ...options, parked: true } : options;
     statements.push(
       env.DB.prepare(
-        "UPDATE rules SET options = ? WHERE id = ? AND user_id = ? AND options = ?",
-      ).bind(JSON.stringify(stored), rule.id, user.id, rule.optionsJson),
+        "UPDATE rules SET options = ? WHERE id = ? AND user_id = ? AND options = ? AND enabled = ?",
+      ).bind(JSON.stringify(stored), rule.id, user.id, rule.optionsJson, rule.enabled ? 1 : 0),
       requireChange(env),
       auditStatement(env.DB, {
         orgId: user.orgId,
@@ -1073,19 +1457,90 @@ async function writePatches(
   await requestSyncs(env, targets, syncs);
 }
 
-/** Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. */
+/**
+ * The audit detail of a change of rule details: what changed, without the user's own words. The
+ * category name of the colour and the category names of the filter stay out; the log records that
+ * the colour changed and how many names the filter has.
+ */
+function detailChanges(old: RuleOptions, options: RuleOptions): Record<string, string> {
+  const detail: Record<string, string> = {};
+  if (options.blockColor !== old.blockColor) detail.blockColor = "changed";
+  if (options.onlyCategories.join("\u0000") !== old.onlyCategories.join("\u0000")) {
+    detail.onlyCategories = String(options.onlyCategories.length);
+  }
+  if (options.bufferBefore !== old.bufferBefore || options.bufferAfter !== old.bufferAfter) {
+    detail.bufferBefore = String(options.bufferBefore);
+    detail.bufferAfter = String(options.bufferAfter);
+  }
+  if (hoursKey(options) !== hoursKey(old)) {
+    detail.workDays = options.workDays.join(",");
+    detail.workStart = options.workStart;
+    detail.workEnd = options.workEnd;
+    detail.workTimeZone = options.workTimeZone;
+  }
+  return detail;
+}
+
+/**
+ * The details of one direction that a save sends with its level (see `setDirections`): the colour
+ * of the copies, working hours on or off, the list of categories. A missing field stays as it is.
+ */
+export interface DirectionDetails {
+  blockColor?: string;
+  workHours?: boolean;
+  onlyCategories?: string[];
+}
+
+/**
+ * The option patch of direction details for a target, as `setRuleDetails` writes them. A colour
+ * that the target's provider refuses is left out; `ruleDetailsProblem` refuses it before a save.
+ * Working hours turned on copy the target's; a target without hours leaves the rules' own.
+ */
+function directionPatch(target: EditorAccount, details: DirectionDetails): Partial<RuleOptions> {
+  const patch: Partial<RuleOptions> = {};
+  if (details.blockColor !== undefined) {
+    const blockColor = blockColorFor(target.provider, details.blockColor);
+    if (blockColor !== null) patch.blockColor = blockColor;
+  }
+  if (details.workHours === false) Object.assign(patch, NO_WORKING_HOURS);
+  else if (details.workHours === true && target.workHours) Object.assign(patch, target.workHours);
+  if (details.onlyCategories !== undefined) patch.onlyCategories = details.onlyCategories;
+  return patch;
+}
+
+/**
+ * Delete a rule and the blocks it wrote. A failed cleanup is recorded, the rule goes anyway. The
+ * audit row names the source account and the level the rule had, because the rule ID leads nowhere
+ * once the rule is gone. It has no `choice`: the rule went, the mirroring can go on with the rules
+ * of other source calendars. The activity page still ends the times of the rule there.
+ */
 export async function deleteRuleWithBlocks(
   env: Env,
   user: CurrentUser,
   ruleId: string,
 ): Promise<boolean> {
   const target = await env.DB.prepare(
-    `SELECT tc.account_id AS accountId, tc.remote_id AS remoteCalendarId FROM rules r
+    `SELECT tc.account_id AS accountId, tc.remote_id AS remoteCalendarId,
+            sc.account_id AS fromAccount, r.options, r.enabled,
+            sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+            ta.email AS targetEmail, ta.tenant_id AS targetTenantId
+     FROM rules r
      JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN calendars sc ON sc.id = r.source_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id
+     JOIN accounts ta ON ta.id = tc.account_id
      WHERE r.id = ? AND r.user_id = ?`,
   )
     .bind(ruleId, user.id)
-    .first<{ accountId: string; remoteCalendarId: string }>();
+    .first<
+      {
+        accountId: string;
+        remoteCalendarId: string;
+        fromAccount: string;
+        options: string;
+        enabled: number;
+      } & AuditIdentities
+    >();
   if (!target) return false;
 
   const queued = await queueRemoval(env, ruleId, target);
@@ -1098,7 +1553,18 @@ export async function deleteRuleWithBlocks(
     accountId: target.accountId,
     ruleId,
     kind: "rule_deleted",
-    detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
+    detail: {
+      ...(queued ? { cleanup: "queued" } : { cleanupFailed: true }),
+      ...fromAccountDetail(target.fromAccount),
+      ...previousDetail(
+        cappedLevelOfRule(
+          env,
+          parseRuleOptions(target.options),
+          target.enabled === 1,
+          ...identities(target),
+        ),
+      ),
+    },
   });
   return true;
 }
@@ -1146,13 +1612,45 @@ export async function setDirection(
 /** What happens after the write batch of `setDirections` for one of its statements. */
 type DirectionFollowUp =
   /** An upsert: a new rule, or the rule of a concurrent request for the same pair. */
-  | { kind: "upsert"; index: number; id: string; to: string; target: RemovalTarget; choice: Choice }
+  | {
+      kind: "upsert";
+      index: number;
+      id: string;
+      from: string;
+      to: string;
+      target: RemovalTarget;
+      choice: Choice;
+      markPrivate?: boolean;
+      details?: Record<string, string>;
+    }
   /** A rule disabled or changed in place. */
-  | { kind: "updated"; ruleId: string; to: string; choice: Choice; remove?: RemovalTarget }
-  /** A rule deleted: its blocks go too. */
-  | { kind: "deleted"; index: number; ruleId: string; to: string; remove: RemovalTarget }
+  | {
+      kind: "updated";
+      ruleId: string;
+      from: string;
+      to: string;
+      choice: Choice;
+      markPrivate?: boolean;
+      details?: Record<string, string>;
+      remove?: RemovalTarget;
+      /** The level of the rule before the change, for the audit log (see `previousDetail`). */
+      previous: { choice: Choice; markPrivate: boolean };
+    }
+  /**
+   * A rule deleted: its blocks go too. `from` and `previous` let the audit row name the mirroring
+   * and the level it had, because the rule ID leads nowhere once the rule is gone.
+   */
+  | {
+      kind: "deleted";
+      index: number;
+      ruleId: string;
+      from: string;
+      to: string;
+      remove: RemovalTarget;
+      previous: { choice: Choice; markPrivate: boolean };
+    }
   /** A parked exception that another choice replaced. */
-  | { kind: "unparked"; index: number; ruleId: string; to: string };
+  | { kind: "unparked"; index: number; ruleId: string; from: string; to: string };
 
 interface RemovalTarget {
   accountId: string;
@@ -1165,17 +1663,39 @@ interface RemovalTarget {
  * A rule changes only if its options are still the ones that were read; otherwise the batch fails
  * as a whole and this throws `EditorConflict`. After the batch, the removals of blocks go to each
  * target account in one call, and the audit events follow in a second batch.
+ *
+ * `details` of a copied choice go into the same write as the level, so that no run sees a wider
+ * level without the filter that the user saved with it, and a failed save stores neither.
+ * `written` collects the pairs "from>to" that the batch wrote; a pair that is missing was skipped,
+ * for example a target that slotmirror cannot write.
  */
 export async function setDirections(
   env: Env,
   user: CurrentUser,
-  changes: { from: string; to: string; choice: Choice }[],
+  changes: {
+    from: string;
+    to: string;
+    choice: Choice;
+    markPrivate?: boolean;
+    details?: DirectionDetails;
+  }[],
   syncs?: Set<string>,
-): Promise<void> {
+  written?: Set<string>,
+  /**
+   * A state the caller read and checked in this request, for example against the version of the
+   * form. The batch then updates and deletes a rule only if its options and its on/off state are
+   * as in that read, and creates a rule only where that read had none; otherwise it throws
+   * `EditorConflict` and stores nothing. Parked exceptions are deleted without that guard: they
+   * write nothing, and a choice other than "off" replaces them anyway.
+   */
+  checked?: EditorState,
+): Promise<Set<string>> {
   // A pair given twice counts once, with its last choice.
   const latest = new Map(changes.map((change) => [`${change.from}>${change.to}`, change]));
-  if (latest.size === 0) return;
-  const state = await loadEditorState(env, user.id);
+  /** Rules "sourceCalendarId>targetCalendarId" whose private mark this call took from the request. */
+  const marked = new Set<string>();
+  if (latest.size === 0) return marked;
+  const state = checked ?? (await loadEditorState(env, user.id));
   const statements: D1PreparedStatement[] = [];
   const followUps: DirectionFollowUp[] = [];
   const targets = new Set<string>();
@@ -1190,7 +1710,12 @@ export async function setDirections(
     options: RuleOptions;
     origin: "group" | "custom";
     enabled: boolean;
-  }) => push(upsertStatement(env, user, rule));
+  }) =>
+    // With a checked state the rule did not exist then: one that another request created since
+    // fails the batch instead of being replaced.
+    checked
+      ? push(upsertStatement(env, user, rule, true), requireChange(env))
+      : push(upsertStatement(env, user, rule));
 
   for (const change of latest.values()) {
     const to = state.accounts.find((account) => account.id === change.to);
@@ -1202,8 +1727,17 @@ export async function setDirections(
     if (choice !== "off" && !to.calendar.canEdit) continue;
     const target = { accountId: to.id, remoteCalendarId: to.calendar.remoteId };
     const bothInGroup = from.inGroup && to.inGroup;
-    // The sync applies the caps anyway; storing the capped value keeps the page honest.
-    if (RANK[choice] > RANK[direction.maxChoice]) choice = direction.maxChoice;
+    // The sync applies the caps anyway; storing the capped value keeps the page honest. A capped
+    // request counts as bare, except that a private request stays private: a cap never makes the
+    // copies more visible than the request asked.
+    const capped = RANK[choice] > RANK[direction.maxChoice];
+    if (capped) choice = direction.maxChoice;
+    const requested = capped && change.markPrivate !== true ? undefined : change.markPrivate;
+    // The mark a bare choice keeps: the direction's own while it is copied, else the default. A
+    // disabled rule's mark is stale: it is the one it had when it was turned off.
+    const keptMark = directionMarksPrivate(direction) ?? state.settings.markPrivate;
+    const patch = choice === "off" || !change.details ? {} : directionPatch(to, change.details);
+    const firstStatement = statements.length;
 
     // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an
     // old "off" when its calendar or the direction's last source comes back.
@@ -1215,7 +1749,7 @@ export async function setDirections(
             user.id,
           ),
         );
-        followUps.push({ kind: "unparked", index, ruleId: parked.id, to: to.id });
+        followUps.push({ kind: "unparked", index, ruleId: parked.id, from: from.id, to: to.id });
       }
     }
 
@@ -1237,46 +1771,96 @@ export async function setDirections(
               origin: "custom",
               enabled: false,
             });
-            followUps.push({ kind: "upsert", index, id, to: to.id, target, choice });
+            followUps.push({ kind: "upsert", index, id, from: from.id, to: to.id, target, choice });
           }
           continue;
         }
         if (!bothInGroup) {
-          const index = push(
-            env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?").bind(rule.id, user.id),
-          );
-          followUps.push({ kind: "deleted", index, ruleId: rule.id, to: to.id, remove: target });
+          // With a checked state, only the rule as it was read: one that another request changed
+          // since fails the batch. Without, a later request wins.
+          const index = checked
+            ? push(
+                env.DB.prepare(
+                  "DELETE FROM rules WHERE id = ? AND user_id = ? AND options = ? AND enabled = ?",
+                ).bind(rule.id, user.id, rule.optionsJson, rule.enabled ? 1 : 0),
+                requireChange(env),
+              )
+            : push(
+                env.DB.prepare("DELETE FROM rules WHERE id = ? AND user_id = ?").bind(
+                  rule.id,
+                  user.id,
+                ),
+              );
+          followUps.push({
+            kind: "deleted",
+            index,
+            ruleId: rule.id,
+            from: from.id,
+            to: to.id,
+            remove: target,
+            previous: previousLevel(env, rule, from, to),
+          });
           continue;
         }
         push(
           env.DB.prepare(
             `UPDATE rules SET enabled = 0, origin = 'custom'
-             WHERE id = ? AND user_id = ? AND options = ?`,
-          ).bind(rule.id, user.id, rule.optionsJson),
+             WHERE id = ? AND user_id = ? AND options = ? AND enabled = ?`,
+          ).bind(rule.id, user.id, rule.optionsJson, rule.enabled ? 1 : 0),
           requireChange(env),
         );
-        followUps.push({ kind: "updated", ruleId: rule.id, to: to.id, choice, remove: target });
+        followUps.push({
+          kind: "updated",
+          ruleId: rule.id,
+          from: from.id,
+          to: to.id,
+          choice,
+          remove: target,
+          previous: previousLevel(env, rule, from, to),
+        });
         continue;
       }
 
-      // A new rule gets the options of its source, which all rules from the source share.
-      const options = {
-        ...(rule?.options ?? {
-          ...(direction.options ?? newRuleOptions(state.settings, choice)),
-          ...newRuleSource(state, from.id),
-        }),
-        detailLevel: choice,
+      // A new rule gets the options of its source, which all rules from the source share. The
+      // private mark goes into the same write as the level, so that no run sees a level without
+      // the mark that the user chose with it. A request with a mark sets it on every rule. A bare
+      // choice keeps each enabled rule's own mark, so that a rule of a mixed direction never
+      // becomes more visible; other rules take the direction's mark or the default.
+      const markPrivate = requested ?? (rule?.enabled ? rule.options.markPrivate : keptMark);
+      if (requested !== undefined) marked.add(`${slot.sourceCalendarId}>${to.calendar.id}`);
+      const base: RuleOptions = rule?.options ?? {
+        ...(direction.options ?? newRuleOptions(state.settings, choice)),
+        ...newRuleSource(state, from.id),
       };
+      const options: RuleOptions = { ...base, ...patch, detailLevel: choice, markPrivate };
+      const details = detailChanges(base, options);
       const origin = groupOrigin(bothInGroup, true, options);
       if (rule) {
         push(
           env.DB.prepare(
             `UPDATE rules SET options = ?, enabled = 1, origin = ?
-             WHERE id = ? AND user_id = ? AND options = ?`,
-          ).bind(JSON.stringify(options), origin, rule.id, user.id, rule.optionsJson),
+             WHERE id = ? AND user_id = ? AND options = ? AND enabled = ?`,
+          ).bind(
+            JSON.stringify(options),
+            origin,
+            rule.id,
+            user.id,
+            rule.optionsJson,
+            rule.enabled ? 1 : 0,
+          ),
           requireChange(env),
         );
-        followUps.push({ kind: "updated", ruleId: rule.id, to: to.id, choice });
+        // The mark the rule gets, also for a bare choice: the row names the level after exactly.
+        followUps.push({
+          kind: "updated",
+          ruleId: rule.id,
+          from: from.id,
+          to: to.id,
+          choice,
+          markPrivate,
+          details,
+          previous: previousLevel(env, rule, from, to),
+        });
       } else {
         const id = crypto.randomUUID();
         const index = upsert({
@@ -1287,12 +1871,23 @@ export async function setDirections(
           origin,
           enabled: true,
         });
-        followUps.push({ kind: "upsert", index, id, to: to.id, target, choice });
+        followUps.push({
+          kind: "upsert",
+          index,
+          id,
+          from: from.id,
+          to: to.id,
+          target,
+          choice,
+          markPrivate,
+          details,
+        });
       }
     }
     if (choice !== "off") targets.add(to.id);
+    if (statements.length > firstStatement) written?.add(`${change.from}>${change.to}`);
   }
-  if (statements.length === 0) return;
+  if (statements.length === 0) return marked;
   const results = await guardedBatch(env, statements);
 
   const removals = new Map<string, { ruleId: string; remoteCalendarId: string }[]>();
@@ -1308,7 +1903,13 @@ export async function setDirections(
     kind: AuditEvent["kind"],
     detail: NonNullable<AuditEvent["detail"]>,
   ) => audits.push({ orgId: user.orgId, userId: user.id, accountId: to, ruleId, kind, detail });
-  const deleted: { ruleId: string; to: string; accountId: string }[] = [];
+  const deleted: {
+    ruleId: string;
+    from: string;
+    to: string;
+    accountId: string;
+    previous: { choice: Choice; markPrivate: boolean };
+  }[] = [];
   for (const followUp of followUps) {
     switch (followUp.kind) {
       case "upsert": {
@@ -1322,23 +1923,41 @@ export async function setDirections(
         }
         event(followUp.to, stored.id, created ? "rule_created" : "rule_updated", {
           choice: followUp.choice,
+          ...markDetail(followUp.choice === "off" ? undefined : followUp.markPrivate),
+          ...followUp.details,
+          ...fromAccountDetail(followUp.from),
         });
         break;
       }
       case "updated":
         if (followUp.remove) remove(followUp.ruleId, followUp.remove);
-        event(followUp.to, followUp.ruleId, "rule_updated", { choice: followUp.choice });
+        event(followUp.to, followUp.ruleId, "rule_updated", {
+          choice: followUp.choice,
+          ...markDetail(followUp.choice === "off" ? undefined : followUp.markPrivate),
+          ...followUp.details,
+          ...previousDetail(followUp.previous),
+          ...fromAccountDetail(followUp.from),
+        });
         break;
       case "deleted":
         // A concurrent request deleted the rule first; it queued the removal and wrote the audit.
         if ((results[followUp.index]?.meta.changes ?? 0) === 0) break;
         remove(followUp.ruleId, followUp.remove);
-        deleted.push({ ruleId: followUp.ruleId, to: followUp.to, ...followUp.remove });
+        deleted.push({
+          ruleId: followUp.ruleId,
+          from: followUp.from,
+          to: followUp.to,
+          accountId: followUp.remove.accountId,
+          previous: followUp.previous,
+        });
         break;
       case "unparked":
         // A parked exception writes no blocks, so there is nothing to remove.
         if ((results[followUp.index]?.meta.changes ?? 0) === 0) break;
-        event(followUp.to, followUp.ruleId, "rule_deleted", { parked: "replaced" });
+        event(followUp.to, followUp.ruleId, "rule_deleted", {
+          parked: "replaced",
+          ...fromAccountDetail(followUp.from),
+        });
         break;
     }
   }
@@ -1353,13 +1972,16 @@ export async function setDirections(
       queued.set(accountId, false);
     }
   }
-  for (const { ruleId, to, accountId } of deleted) {
-    event(
-      to,
-      ruleId,
-      "rule_deleted",
-      queued.get(accountId) ? { cleanup: "queued" } : { cleanupFailed: true },
-    );
+  // A save that turns a mirroring off deletes its rules. The row says so as a level change to "off"
+  // and names the source account, so that the activity page can show the mirroring (the target
+  // is the row's account). IDs and levels only.
+  for (const { ruleId, from, to, accountId, previous } of deleted) {
+    event(to, ruleId, "rule_deleted", {
+      ...(queued.get(accountId) ? { cleanup: "queued" } : { cleanupFailed: true }),
+      choice: "off",
+      ...fromAccountDetail(from),
+      ...previousDetail(previous),
+    });
   }
   if (audits.length > 0) {
     // The change is done; like `recordAudit`, a broken log must not fail the request.
@@ -1370,6 +1992,106 @@ export async function setDirections(
     }
   }
   await requestSyncs(env, targets, syncs);
+  return marked;
+}
+
+/** The private mark of a level for the audit log, if it has one. */
+function markDetail(markPrivate: boolean | undefined): { markPrivate?: boolean } {
+  return markPrivate === undefined ? {} : { markPrivate };
+}
+
+/**
+ * The level of a stored rule between two accounts, with the org caps: its choice, and its mark. A
+ * disabled rule is off.
+ */
+function previousLevel(
+  env: Env,
+  rule: SlotRule,
+  from: EditorAccount,
+  to: EditorAccount,
+): { choice: Choice; markPrivate: boolean } {
+  return cappedLevelOfRule(env, rule.options, rule.enabled, from, to);
+}
+
+/** Address and tenant of the two accounts of a rule, as a query reads them for the org caps. */
+interface AuditIdentities {
+  sourceEmail: string;
+  sourceTenantId: string | null;
+  targetEmail: string;
+  targetTenantId: string | null;
+}
+
+/** The two identities of a row with `AuditIdentities`, in the order the cap helpers take them. */
+function identities(row: AuditIdentities): [AccountIdentity, AccountIdentity] {
+  return [
+    { email: row.sourceEmail, tenantId: row.sourceTenantId },
+    { email: row.targetEmail, tenantId: row.targetTenantId },
+  ];
+}
+
+/** `levelOfRule` with the org caps applied, as the sync applies them. */
+function cappedLevelOfRule(
+  env: Env,
+  options: RuleOptions,
+  enabled: boolean,
+  source: AccountIdentity,
+  target: AccountIdentity,
+): { choice: Choice; markPrivate: boolean } {
+  const { choice } = cappedLevelAuditDetail(env, options, enabled, source, target);
+  return { choice, markPrivate: options.markPrivate };
+}
+
+/**
+ * The level a rule has after a change, for its audit row: the choice, and the mark it actually got
+ * while it copies. Off carries no mark. The activity page reads the pair as the level after, so a
+ * row that names the level never leaves the mark to a guess.
+ */
+export function levelAuditDetail(
+  options: RuleOptions,
+  enabled: boolean,
+): { choice: Choice; markPrivate?: boolean } {
+  const choice = choiceOf(options, enabled);
+  return choice === "off" ? { choice } : { choice, markPrivate: options.markPrivate };
+}
+
+/**
+ * `levelAuditDetail` with the org caps applied, as the sync applies them: for a rule whose stored
+ * options can name more than the caps allow (the old rules page, a rule held by an offboarding).
+ * The row then never names a wider level than the copies get.
+ */
+export function cappedLevelAuditDetail(
+  env: Env,
+  options: RuleOptions,
+  enabled: boolean,
+  source: AccountIdentity,
+  target: AccountIdentity,
+): { choice: Choice; markPrivate?: boolean } {
+  const { level } = detailLevelFor(env, options.detailLevel, source, target);
+  return levelAuditDetail({ ...options, detailLevel: level }, enabled);
+}
+
+/**
+ * The source account of a rule, for every `rule_*` audit row. With the row's own account (the
+ * target) it names the mirroring also after the rule is deleted, so the activity page can keep the
+ * row under its mirroring and its filters can find it. An ID only, never an address.
+ */
+export function fromAccountDetail(from: string): { fromAccount: string } {
+  return { fromAccount: from };
+}
+
+/**
+ * The level before a change, for the `rule_updated` audit row, so that the activity page can show
+ * "{old} → {new}" and drop changes that cancel out. Flat fields, because an audit detail holds
+ * plain values. Only the level: never a name, a title or a category. Off carries no mark: the mark
+ * of a disabled rule is the one it had when it was turned off.
+ */
+export function previousDetail(previous: { choice: Choice; markPrivate: boolean }): {
+  previousChoice: Choice;
+  previousMarkPrivate?: boolean;
+} {
+  return previous.choice === "off"
+    ? { previousChoice: "off" }
+    : { previousChoice: previous.choice, previousMarkPrivate: previous.markPrivate };
 }
 
 /**
@@ -1384,6 +2106,12 @@ export async function setSourceCalendar(
   calendarId: string,
   isSource: boolean,
   syncs?: Set<string>,
+  /**
+   * The caller read the calendar with the other value and checked that read in this request. If
+   * another request switched it since, `EditorConflict` is thrown and nothing is written. Without
+   * it, a calendar that already has the value is left as it is.
+   */
+  checked?: boolean,
 ): Promise<void> {
   const updated = await env.DB.prepare(
     `UPDATE calendars SET is_source = ?
@@ -1392,13 +2120,17 @@ export async function setSourceCalendar(
   )
     .bind(isSource ? 1 : 0, calendarId, isSource ? 1 : 0, user.id)
     .run();
-  if (updated.meta.changes === 0) return;
+  if (updated.meta.changes === 0) {
+    if (checked) throw new EditorConflict();
+    return;
+  }
 
   if (!isSource) {
     const { results } = await env.DB.prepare(
       `SELECT r.id, r.enabled, r.origin, tc.is_default AS isMain, tc.account_id AS accountId,
-              tc.remote_id AS remoteCalendarId
+              tc.remote_id AS remoteCalendarId, sc.account_id AS fromAccount
        FROM rules r JOIN calendars tc ON tc.id = r.target_calendar_id
+       JOIN calendars sc ON sc.id = r.source_calendar_id
        WHERE r.source_calendar_id = ? AND r.user_id = ?`,
     )
       .bind(calendarId, user.id)
@@ -1409,6 +2141,7 @@ export async function setSourceCalendar(
         isMain: number;
         accountId: string;
         remoteCalendarId: string;
+        fromAccount: string;
       }>();
     for (const row of results) {
       if (row.enabled === 0 && row.origin === "custom" && row.isMain === 1) {
@@ -1418,7 +2151,22 @@ export async function setSourceCalendar(
           .bind(row.id)
           .run();
         // A paused rule can still have blocks; an exception has none, and the queue finds none.
-        await queueRemoval(env, row.id, row);
+        const queued = await queueRemoval(env, row.id, row);
+        // A pause of the old rules page left its copies showing; this removal ends them, so the
+        // row says so. The rule was off already: the level stays "off". IDs and levels only.
+        await recordAudit(env.DB, {
+          orgId: user.orgId,
+          userId: user.id,
+          accountId: row.accountId,
+          ruleId: row.id,
+          kind: "rule_updated",
+          detail: {
+            choice: "off",
+            previousChoice: "off",
+            cleanup: queued ? "queued" : "none",
+            ...fromAccountDetail(row.fromAccount),
+          },
+        });
       } else {
         await deleteRuleWithBlocks(env, user, row.id);
       }
@@ -1429,12 +2177,12 @@ export async function setSourceCalendar(
   // A parked exception is current only if no other source calendar has a rule for the direction.
   // Otherwise the other calendar holds the choice, and the parked rule gives way to a copy of it.
   const state = await loadEditorState(env, user.id);
-  const stale: { ruleId: string; accountId: string }[] = [];
+  const stale: { ruleId: string; from: string; accountId: string }[] = [];
   for (const direction of state.directions) {
     const own = direction.slots.find((slot) => slot.sourceCalendarId === calendarId);
     const other = direction.slots.some((slot) => slot !== own && slot.rule);
     if (own?.rule && isMarkedParked(own.rule.optionsJson) && other) {
-      stale.push({ ruleId: own.rule.id, accountId: direction.to });
+      stale.push({ ruleId: own.rule.id, from: direction.from, accountId: direction.to });
       own.rule = null;
     }
   }
@@ -1457,15 +2205,19 @@ export async function setSourceCalendar(
     syncs,
   );
   const deleted = stale.filter((_, index) => (results[index]?.meta.changes ?? 0) > 0);
-  for (const { ruleId, accountId } of deleted) {
+  for (const { ruleId, from, accountId } of deleted) {
     // An exception writes no blocks, so there is nothing to remove.
-    await audit(env, user, accountId, ruleId, "rule_deleted", { parked: "replaced" });
+    await audit(env, user, accountId, ruleId, "rule_deleted", {
+      parked: "replaced",
+      ...fromAccountDetail(from),
+    });
   }
 }
 
 /**
  * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * and the working hours go back to none too, so that the direction is the plain default again.
+ * and the working hours go back to none too, and the private mark to the one of the settings, so
+ * that the direction is the plain default again.
  * The buffer stays: it belongs to the source, not to the direction. A group direction can still
  * get a colour later; that does not make it an exception. A read-only target stays as it is:
  * `can_edit` can be wrong, so a reset must not remove blocks there. "Off" is the explicit way.
@@ -1485,8 +2237,11 @@ export async function resetDirection(
   const syncs = new Set<string>();
   try {
     await setRuleDetails(env, user, { workHours: [{ from: fromId, to: toId, on: false }] }, syncs);
+    // The group's busy carries the mark of the settings, named here because a bare busy would keep
+    // the direction's own mark; see `setDirections`.
     const choice = from.inGroup && to.inGroup ? "busy" : "off";
-    await setDirection(env, user, fromId, toId, choice, syncs);
+    const markPrivate = choice === "busy" ? state.settings.markPrivate : undefined;
+    await setDirections(env, user, [{ from: fromId, to: toId, choice, markPrivate }], syncs);
     await setBlockColor(env, user, fromId, toId, "", syncs);
     // Last, so that a rule that goes away never runs without its list.
     await setRuleDetails(
@@ -1500,16 +2255,19 @@ export async function resetDirection(
   }
 }
 
-/** A rule that a direction lacks, with the choice for the audit log. */
+/** A rule that a direction lacks, with its source account for the audit log. */
 interface MissingRule {
   id: string;
+  fromAccountId: string;
+  /** Address and tenant of both accounts, for the org caps of the level in the audit log. */
+  source: AccountIdentity;
+  target: AccountIdentity;
   sourceCalendarId: string;
   targetCalendarId: string;
   targetAccountId: string;
   options: RuleOptions;
   origin: "group" | "custom";
   enabled: boolean;
-  choice: Choice;
 }
 
 /**
@@ -1544,13 +2302,15 @@ function missingRules(state: EditorState): MissingRule[] {
       if (slot.rule) continue;
       missing.push({
         id: crypto.randomUUID(),
+        fromAccountId: from.id,
+        source: { email: from.email, tenantId: from.tenantId },
+        target: { email: to.email, tenantId: to.tenantId },
         sourceCalendarId: slot.sourceCalendarId,
         targetCalendarId: to.calendar.id,
         targetAccountId: to.id,
         options,
         origin: model?.origin ?? "group",
         enabled: model?.enabled ?? true,
-        choice: model ? choiceOf(model.options, model.enabled) : "busy",
       });
     }
   }
@@ -1588,7 +2348,12 @@ function insertStatements(
         accountId: rule.targetAccountId,
         ruleId: rule.id,
         kind: "rule_created",
-        detail: { choice: rule.choice },
+        // The level and mark the copy gets from its model, with the org caps as the sync applies
+        // them: a model from the old rules page can store more than the caps allow.
+        detail: {
+          ...cappedLevelAuditDetail(env, rule.options, rule.enabled, rule.source, rule.target),
+          ...fromAccountDetail(rule.fromAccountId),
+        },
       },
       "rule_exists",
     ),
@@ -1608,6 +2373,11 @@ function syncTargets(rules: MissingRule[], results: D1Result[], offset: number):
 /**
  * Ask accounts to sync, or add them to `syncs`, so that a save with several steps asks each
  * account once, after its last write.
+ *
+ * The write is stored when this runs, so a failed request must not fail the save: the save would
+ * show the error page for stored values, and the accounts after it would not be asked. A failure
+ * is logged per account. The hourly full cycle of the cron then syncs that account, so the change
+ * can take up to an hour to reach a watched calendar.
  */
 export async function requestSyncs(
   env: Env,
@@ -1615,8 +2385,15 @@ export async function requestSyncs(
   syncs?: Set<string>,
 ): Promise<void> {
   for (const id of accountIds) {
-    if (syncs) syncs.add(id);
-    else await accountSync(env, id).requestSync(carrier());
+    if (syncs) {
+      syncs.add(id);
+      continue;
+    }
+    try {
+      await accountSync(env, id).requestSync(carrier());
+    } catch (error) {
+      log.error("sync.request_failed", { accountId: id }, error);
+    }
   }
 }
 
@@ -1721,16 +2498,30 @@ async function leaveGroup(
   // Every group rule from or to a leaving account, whatever calendar it targets: after a change of
   // the main calendar, group rules into the old one are outside the editor's directions.
   const { results: deletions } = await env.DB.prepare(
-    `SELECT r.id AS ruleId, tc.account_id AS accountId, tc.remote_id AS remoteCalendarId
+    `SELECT r.id AS ruleId, tc.account_id AS accountId, tc.remote_id AS remoteCalendarId,
+            sc.account_id AS fromAccount, r.options, r.enabled,
+            sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId,
+            ta.email AS targetEmail, ta.tenant_id AS targetTenantId
      FROM rules r
      JOIN calendars sc ON sc.id = r.source_calendar_id
      JOIN calendars tc ON tc.id = r.target_calendar_id
+     JOIN accounts sa ON sa.id = sc.account_id
+     JOIN accounts ta ON ta.id = tc.account_id
      WHERE r.user_id = ?1 AND r.origin = 'group'
        AND (sc.account_id IN (SELECT value FROM json_each(?2))
          OR tc.account_id IN (SELECT value FROM json_each(?2)))`,
   )
     .bind(user.id, JSON.stringify(accountIds))
-    .all<{ ruleId: string; accountId: string; remoteCalendarId: string }>();
+    .all<
+      {
+        ruleId: string;
+        accountId: string;
+        remoteCalendarId: string;
+        fromAccount: string;
+        options: string;
+        enabled: number;
+      } & AuditIdentities
+    >();
   const results = await env.DB.batch([
     ...accountIds.map((id) => membershipUpdate(env, user, id, false)),
     ...deletions.map(({ ruleId }) =>
@@ -1755,7 +2546,18 @@ async function leaveGroup(
         accountId: deletion.accountId,
         ruleId: deletion.ruleId,
         kind: "rule_deleted",
-        detail: queued ? { cleanup: "queued" } : { cleanupFailed: true },
+        detail: {
+          ...(queued ? { cleanup: "queued" } : { cleanupFailed: true }),
+          ...fromAccountDetail(deletion.fromAccount),
+          ...previousDetail(
+            cappedLevelOfRule(
+              env,
+              parseRuleOptions(deletion.options),
+              deletion.enabled === 1,
+              ...identities(deletion),
+            ),
+          ),
+        },
       }),
     );
   }
@@ -1815,9 +2617,16 @@ function upsertStatement(
     origin: "group" | "custom";
     enabled: boolean;
   },
+  /** Insert only: a rule that exists for the pair stays, and the statement changes no row. */
+  insertOnly = false,
 ): D1PreparedStatement {
   return env.DB.prepare(
-    `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
+    insertOnly
+      ? `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (source_calendar_id, target_calendar_id) DO NOTHING
+         RETURNING id`
+      : `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options, enabled, origin)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (source_calendar_id, target_calendar_id) DO UPDATE SET
        options = excluded.options, enabled = excluded.enabled, origin = excluded.origin

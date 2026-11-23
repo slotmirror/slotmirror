@@ -24,18 +24,21 @@ slotmirror sieht eine Änderung im Spielplan erst nach dieser Aktualisierung.
 1. Abonniere den Spielplan in dem Konto, in dem du ihn schon hast, zum Beispiel im Google Kalender.
 2. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein. Verbinde dieses Konto
    und dein Arbeitskonto.
-3. Klappe auf der Seite **Regeln** die Karte des Kontos mit dem Spielplan auf.
-4. Schalte in der Zeile **Kalender** den Spielplan neben **Hauptkalender** ein.
-5. Lass für den Arbeitskalender **Als belegt** stehen, oder wähle **Mit Titel**, wenn Kolleginnen
-   und Kollegen „Heimspiel“ sehen dürfen.
-6. Wähle **Speichern**.
+3. Öffne auf der Seite **Kalender** das Panel des Kontos mit dem Spielplan.
+4. Schalte unter **Aus diesen Kalendern kopieren** den Spielplan neben dem Kalender mit der Marke
+   **Hauptkalender** ein und wähle **Speichern**.
+5. Öffne auf der Seite **Spiegelung** die Zeile von diesem Konto zum Arbeitskalender. Lass unter
+   **Was kopiert wird** die Stufe **Nur belegt** stehen, oder wähle **Titel**, wenn Kolleginnen und
+   Kollegen „Heimspiel“ sehen dürfen. Stelle bei **Titel** **Was andere sehen** auf **Wie bei
+   dir**.
+6. Wähle **Speichern**. Wird noch nichts gespiegelt, wähle zuerst **Alle als belegt spiegeln**.
 
 ## Gut zu wissen
 
 - Der Spielplan ist nur eine Quelle. Blöcke landen im Hauptkalender jedes Zielkontos.
-- **Ganztägige Termine auslassen** ist standardmäßig aus. Ganztägige Einträge wie Turniertage
+- **Ganztägige Termine überspringen** ist standardmäßig aus. Ganztägige Einträge wie Turniertage
   blocken also den ganzen Tag. Einträge, die als frei markiert sind, bleiben draußen. Um alle
-  ganztägigen Einträge auszulassen, schalte die Einstellung unter **Für alle Kalender** ein. Sie
+  ganztägigen Einträge auszulassen, schalte die Einstellung unter **Für alle Spiegelungen** auf der Seite **Spiegelung** ein. Sie
   gilt für alle deine Kalender.
 
 ## Verwandte Anleitungen

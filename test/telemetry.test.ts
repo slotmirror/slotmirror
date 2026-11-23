@@ -2,6 +2,10 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { refreshUserCalendars } from "../src/calendars";
 import { accountSync } from "../src/durable";
+import { setSettings } from "../src/editor";
+import { settingsFrom } from "../src/form";
+import { startOrgCompares } from "../src/next-admin";
+import { removeAccounts } from "../src/offboarding";
 import { workersTracer } from "../src/runtime/workers/telemetry";
 import {
   carrier,
@@ -194,6 +198,106 @@ describe("a request across the Durable Object boundary", () => {
     const [inner] = find("calendars.list_failed");
     expect(inner?.fields.requestId).toMatch(/^[0-9a-f]{16}$/);
     expect(inner?.fields.requestId).not.toBe(id);
+  });
+});
+
+describe("the log calls of the pages and forms", () => {
+  async function owner(name: string) {
+    const user = {
+      id: `user-${name}`,
+      orgId: `org-${name}`,
+      email: `${name}@example.com`,
+      role: "member",
+      mcpForMembers: "all",
+    } as const;
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs (id, name) VALUES (?, 'T')").bind(user.orgId),
+      env.DB.prepare("INSERT INTO users (id, org_id, email, role) VALUES (?, ?, ?, 'member')").bind(
+        user.id,
+        user.orgId,
+        user.email,
+      ),
+    ]);
+    return user;
+  }
+
+  /** Let every audit row of `kind` fail, as a broken log does. */
+  async function withBrokenAudit(kind: string, fn: () => Promise<void>) {
+    await env.DB.prepare(
+      `CREATE TRIGGER broken_audit BEFORE INSERT ON audit_events WHEN NEW.kind = '${kind}'
+       BEGIN SELECT RAISE(ABORT, 'audit down'); END`,
+    ).run();
+    try {
+      await fn();
+    } finally {
+      await env.DB.prepare("DROP TRIGGER broken_audit").run();
+    }
+  }
+
+  it("logs a failed comparison start with the request ID that it passes on", async () => {
+    const { find } = capturing();
+    const user = await owner("log-compare");
+    await addAccount(user.id, "log-compare-account", user.email);
+    let passed: unknown;
+    const failing = {
+      ...env,
+      DATA_JURISDICTION: "",
+      ACCOUNT_SYNC: {
+        getByName: () => ({
+          startCompares: async (_mode: string, from: unknown) => {
+            passed = from;
+            throw new Error("refused for alice@corp.example");
+          },
+        }),
+      },
+    } as unknown as Env;
+    const id = await startRequest("http", async () => {
+      await startOrgCompares(failing, user.orgId);
+      return requestId();
+    });
+    expect(passed).toMatchObject({ requestId: id });
+    const [record] = find("compare.start_failed");
+    expect(record?.fields).toMatchObject({ requestId: id, accountId: "log-compare-account" });
+    expect(JSON.stringify(record)).not.toContain("alice@");
+  });
+
+  it("logs a failed audit of a disconnect as an event", async () => {
+    const { find } = capturing();
+    const user = await owner("log-disconnect");
+    await addAccount(user.id, "log-disconnect-account", user.email);
+    await withBrokenAudit("account_disconnected", () =>
+      startRequest("http", () => removeAccounts(env, user, ["log-disconnect-account"])),
+    );
+    const [record] = find("audit.write_failed");
+    expect(record?.fields).toMatchObject({ auditKind: "account_disconnected", trigger: "http" });
+  });
+
+  it("logs a failed audit of changed settings as an event", async () => {
+    const { find } = capturing();
+    const user = await owner("log-settings");
+    await addAccount(user.id, "log-settings-a", "log-settings-a@example.com");
+    await addAccount(user.id, "log-settings-b", "log-settings-b@example.com");
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO calendars (id, account_id, remote_id, name, can_edit)
+         VALUES ('log-ca', 'log-settings-a', 'a', 'A', 1), ('log-cb', 'log-settings-b', 'b', 'B', 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options)
+         VALUES ('log-rule', ?, 'log-ca', 'log-cb', '{"markPrivate":false}')`,
+      ).bind(user.id),
+    ]);
+    const form = new FormData();
+    form.set("newWho", "private");
+    form.set("applyWho", "1");
+    await withBrokenAudit("settings_changed", () =>
+      startRequest("http", () =>
+        // The syncs are collected, so no instance is called.
+        setSettings(env, user, settingsFrom(form, "Busy"), new Set()),
+      ),
+    );
+    const [record] = find("audit.write_failed");
+    expect(record?.fields).toMatchObject({ auditKind: "settings_changed", trigger: "http" });
   });
 });
 

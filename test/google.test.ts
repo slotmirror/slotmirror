@@ -75,6 +75,25 @@ describe("toGoogleBlock", () => {
     );
     expect(body.extendedProperties.private.slotmirrorDedupKey).toMatch(/^[0-9a-f]{32}$/);
   });
+
+  it("sends the visibility of the rule's mark on a create and on an update", async () => {
+    for (const [markPrivate, visibility] of [
+      [true, "private"],
+      [false, "default"],
+    ] as const) {
+      const [block] = await desiredBlocks(
+        "rule",
+        [byKey(":single1") as SourceEvent],
+        ruleOptionsSchema.parse({ markPrivate }),
+      );
+      for (const update of [false, true]) {
+        expect(
+          toGoogleBlock(block!, "tag123456789", { update }),
+          `${markPrivate} ${update}`,
+        ).toHaveProperty("visibility", visibility);
+      }
+    }
+  });
 });
 
 describe("Google batch", () => {
@@ -215,6 +234,37 @@ describe("Google batch", () => {
           start: { dateTime: "2026-11-02T09:00:00.000Z", timeZone: "UTC", date: null },
           end: { dateTime: "2026-11-02T10:00:00.000Z", timeZone: "UTC", date: null },
         },
+      ]);
+    });
+
+    it("sends the visibility of each block in the PATCH and POST bodies of the batch", async () => {
+      let sent = "";
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+        sent = init?.body as string;
+        return new Response("--r--", {
+          headers: { "content-type": "multipart/mixed; boundary=r" },
+        });
+      });
+      const open = { ...block(false), isPrivate: false };
+      await new GoogleCalendar("token").applyBatch("primary", "tag123456789", [
+        { kind: "update", targetId: "evt-open", block: open },
+        { kind: "update", targetId: "evt-private", block: block(false) },
+        { kind: "create", block: open },
+        { kind: "create", block: block(false) },
+      ]);
+      const parts = sent
+        .split(/^--batch_.*$/m)
+        .filter((part) => /^(POST|PATCH) /m.test(part))
+        .map((part) => ({
+          method: /^(POST|PATCH) /m.exec(part)?.[1],
+          visibility: (JSON.parse(part.slice(part.indexOf("{"))) as { visibility?: unknown })
+            .visibility,
+        }));
+      expect(parts).toEqual([
+        { method: "PATCH", visibility: "default" },
+        { method: "PATCH", visibility: "private" },
+        { method: "POST", visibility: "default" },
+        { method: "POST", visibility: "private" },
       ]);
     });
 

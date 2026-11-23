@@ -205,8 +205,8 @@ describe("security headers", () => {
         await exports.default.fetch(`${BASE}${path}`, { headers: { cookie } })
       ).text();
       // Every script tag loads a file; no handler attribute such as onclick.
-      for (const tag of html.match(/<script\b[^>]*>/g) ?? []) expect(tag, path).toMatch(/\ssrc="/);
-      expect(html, path).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+      for (const tag of html.match(/<script\b[^>]*>/gi) ?? []) expect(tag, path).toMatch(/\ssrc="/);
+      expect(html, path).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/i);
       expect(html, path).not.toMatch(/\son[a-z]+="/);
     }
   });

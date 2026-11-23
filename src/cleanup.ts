@@ -1,4 +1,5 @@
 import type { CleanupResult } from "./audit";
+import { runQueries, single, type Query } from "./batch";
 
 /**
  * Tombstones: the removal of an offboarding as a D1 row. `AccountSync` holds the running job. The
@@ -376,17 +377,22 @@ function cleanupsOf(rows: TombstoneRow[]): Cleanups {
   };
 }
 
-/** What a user's offboardings left, per target calendar. */
-export async function ownCleanups(db: D1Database, userId: string): Promise<Cleanups> {
-  const { results } = await db
+/** The read of `ownCleanups` as a query for a batch (see `src/batch.ts`). */
+export function ownCleanupsQuery(db: D1Database, userId: string): Query<Cleanups> {
+  const statement = db
     .prepare(
       `SELECT ${TOMBSTONE_COLUMNS}, a.email AS accountEmail FROM cleanup_tombstones t
        LEFT JOIN accounts a ON a.id = t.account_id
        WHERE t.user_id = ? AND ${WITH_REST} ORDER BY t.calendar_name, t.rule_tag`,
     )
-    .bind(userId)
-    .all<TombstoneRow>();
-  return cleanupsOf(results);
+    .bind(userId);
+  return single(statement, (result) => cleanupsOf(result.results as TombstoneRow[]));
+}
+
+/** What a user's offboardings left, per target calendar. */
+export async function ownCleanups(db: D1Database, userId: string): Promise<Cleanups> {
+  const [cleanups] = await runQueries(db, [ownCleanupsQuery(db, userId)]);
+  return cleanups;
 }
 
 /** What the org's deleted users left, for an admin, without their accounts. */

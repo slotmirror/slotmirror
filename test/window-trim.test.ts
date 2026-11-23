@@ -482,7 +482,7 @@ describe("changing daysAhead in the editor", () => {
     const { user, cookie, save, windows, trims } = await editorSetup("trim-unstored", 365);
     expect((await loadEditorState(env, user.id)).settings.daysAhead).toBe(365);
     const page = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+      await exports.default.fetch(`${BASE}/mirroring?d=all`, { headers: { cookie } })
     ).text();
     expect(page).toContain('name="daysAheadShown" value="365"');
 

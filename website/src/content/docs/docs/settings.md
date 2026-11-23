@@ -1,6 +1,6 @@
 ---
 title: Settings reference
-description: All variables and secrets of a slotmirror deployment, and the sync settings on the Rules page.
+description: All variables and secrets of a slotmirror deployment, and the sync settings on the Mirroring page.
 ---
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
@@ -132,29 +132,31 @@ rule can then wait some hours longer for its alert.
 All alerts depend on the cron. If the cron itself does not run, for example because the Worker is
 down or its trigger is gone, no alert arrives. Use an outside uptime check for that case.
 
-## Settings for all calendars
+## Settings for all mirrorings
 
-![Sync settings for all calendars](../../../../../docs/images/settings.png)
+![Sync settings for all calendars, in the previous interface](../../../../../docs/images/settings.png)
 
-Each user sets these on the **Rules** page, under **For all calendars**. They apply to every direction.
+Each user sets these on the **Mirroring** page. Choose **For all mirrorings** in the header. They
+apply to every mirroring.
 
-| Setting                               | Effect                                                                                                                                                                       |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Time window                           | How many days ahead the sync looks.                                                                                                                                          |
-| Title of busy blocks                  | The title of copies at the level "As busy".                                                                                                                                  |
-| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.                                                                                       |
-| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.                                                                                                |
-| Mark copies as private                | People who can see your calendar see "Private" instead of the title. You see everything. Turning it on marks every direction. Turning it off applies only to new directions. |
-| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.                                                                                                   |
-| Skip Google events with these colours | Google event colours to leave out.                                                                                                                                           |
+| Setting                               | Effect                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How far ahead                         | How many days ahead the sync looks. Events up to this many days from today are copied.                                                                                                                                                                                                                                                   |
+| Title of busy copies                  | The title of copies at the level **Busy only**. Leave it empty for "Busy".                                                                                                                                                                                                                                                               |
+| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.                                                                                                                                                                                                                                                   |
+| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.                                                                                                                                                                                                                                                            |
+| What others see, by default           | **Private event**: people who can see your calendar see a private event, or "Busy" in Google Calendar, instead of the title. You see everything. The choice applies to mirrorings you turn on later. Existing mirrorings keep their own choice, unless you also tick **Also apply to N existing mirrorings** (shown when there are any). |
+| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.                                                                                                                                                                                                                                                               |
+| Skip Google events with these colours | Google event colours to leave out.                                                                                                                                                                                                                                                                                                       |
 
 Events marked private in the source never carry more than "Busy".
 
 ## Copy only some categories
 
-A direction can copy only part of its source. Open a source on the **Rules** page, and open **Copy only some
-categories** in the row of the target. The list applies to that direction only. The exclusions under
-**For all calendars** stay as they are.
+A mirroring can copy only part of its source. Open the mirroring on the **Mirroring** page, and
+fill **Only these categories** (for an Outlook source) or **Only these colours** (for a Google
+source) under **Limits**. The list applies to that mirroring only. The skip settings under **For
+all mirrorings** stay as they are.
 
 The list is empty by default, and then every event is copied. If the list has entries, an event
 needs at least one of them. An event without a category is not copied.
