@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.1.0...slotmirror-v0.2.0) (2026-11-22)
+
+
+### Features
+
+* **consent:** frame the app consent as a step outside the app ([#100](https://github.com/slotmirror/slotmirror/issues/100)) ([4c0a509](https://github.com/slotmirror/slotmirror/commit/4c0a5096f1eac9d07ad3753f076e91abdc8b81fa))
+* **mcp:** add list_events for events across all source calendars ([#114](https://github.com/slotmirror/slotmirror/issues/114)) ([61b204e](https://github.com/slotmirror/slotmirror/commit/61b204e407ca37fb17899ad9d4752f97cd106f4e))
+* **node:** add the SQLite registry database ([#91](https://github.com/slotmirror/slotmirror/issues/91)) ([90bb298](https://github.com/slotmirror/slotmirror/commit/90bb298f28b311c6c76dde9b0f0ed67998e03c31))
+* **telemetry:** log structured events with a request id through a runtime port ([#102](https://github.com/slotmirror/slotmirror/issues/102)) ([38d0201](https://github.com/slotmirror/slotmirror/commit/38d020112209deb047912971fb5005e7cd7e12a6))
+* **website:** add an imprint and a privacy notice for slotmirror.com ([#93](https://github.com/slotmirror/slotmirror/issues/93)) ([662c533](https://github.com/slotmirror/slotmirror/commit/662c533fa91c9f856f564ae24d4846e94fab0310))
+* **website:** rebuild the home page around trust, setup effort and the waitlist ([#101](https://github.com/slotmirror/slotmirror/issues/101)) ([04679ea](https://github.com/slotmirror/slotmirror/commit/04679eadbb4568eb71453d248d8e342b77017ddd))
+* **website:** redesign the home page around a live demo and showcase cards ([#92](https://github.com/slotmirror/slotmirror/issues/92)) ([f9b5685](https://github.com/slotmirror/slotmirror/commit/f9b5685e8a4d0f554f76882cb1453c3751f8a791))
+
+
+### Bug fixes
+
+* **auth:** redirect after sign-out when the body cannot be read ([#116](https://github.com/slotmirror/slotmirror/issues/116)) ([91bd53b](https://github.com/slotmirror/slotmirror/commit/91bd53bef143ff7359348d2f119802a5e1fcf92b))
+* **calendars:** skip a calendar that does not fit the schema and read every page ([#99](https://github.com/slotmirror/slotmirror/issues/99)) ([8fe34c3](https://github.com/slotmirror/slotmirror/commit/8fe34c35bde536e41f71fd7016c4b3863d56abc5))
+* **consent:** add the language switch to the consent page ([#117](https://github.com/slotmirror/slotmirror/issues/117)) ([9ca8c2e](https://github.com/slotmirror/slotmirror/commit/9ca8c2e7053664158a12e55468169cad08fa5765))
+* **graph:** accept a calendar whose owner is null ([#97](https://github.com/slotmirror/slotmirror/issues/97)) ([0bb5f09](https://github.com/slotmirror/slotmirror/commit/0bb5f0978b6e7b1e07e55ab35a6235bfb37aef20))
+* **log:** log why listing calendars failed inside the account instance ([#96](https://github.com/slotmirror/slotmirror/issues/96)) ([81cb350](https://github.com/slotmirror/slotmirror/commit/81cb350d58f4d8d2fee8f5c1cef38e1f13e602b1))
+* **log:** name the code and path of a schema error in error logs ([#95](https://github.com/slotmirror/slotmirror/issues/95)) ([f5bef68](https://github.com/slotmirror/slotmirror/commit/f5bef685bc3f69ef4e59d83e1426be25e0d3ac30))
+* **release:** ignore release-please files in oxfmt and read the version in tests ([#86](https://github.com/slotmirror/slotmirror/issues/86)) ([3889106](https://github.com/slotmirror/slotmirror/commit/3889106dabf6b0cb84c969ab10e7ec43a93b8d20))
+* **settings:** keep each rule's private mark when the switch is off ([#113](https://github.com/slotmirror/slotmirror/issues/113)) ([43e187b](https://github.com/slotmirror/slotmirror/commit/43e187bc61641c3ffda8087307fb07c315540036))
+
+
+### Documentation
+
+* **license:** drop license-mit and link the mit text at its last commit ([#98](https://github.com/slotmirror/slotmirror/issues/98)) ([8fe8430](https://github.com/slotmirror/slotmirror/commit/8fe8430987ab86451ae4431c0c5f6ae773aa6ddf))
+
 ## 0.1.0 (2026-11-06)
 
 
