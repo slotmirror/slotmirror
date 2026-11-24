@@ -1,4 +1,5 @@
 import * as z from "zod/mini";
+import { googleColorId } from "./category-values";
 import { markerValueFor, parseMarkerValue } from "./graph-events";
 import { isoInstant } from "./iso-time";
 import { isObject, isOptionalString } from "./quick-check";
@@ -200,6 +201,18 @@ function toTime(value: { date?: string; dateTime?: string }): string {
 }
 
 /**
+ * The colour ID of a block. An event has one colour, so the first passed category that is a colour
+ * ID wins over the block colour. Values that are no colour ID are dropped.
+ */
+function googleColor(block: DesiredBlock): string | null {
+  for (const value of block.categories ?? []) {
+    const id = googleColorId(value);
+    if (id !== null) return id;
+  }
+  return block.color ? googleColorId(block.color) : null;
+}
+
+/**
  * Google event body for a block. No attendees, so that no invitations are sent.
  *
  * With `update`, the body is for a PATCH. PATCH merges `start` and `end` into the stored event, and
@@ -222,7 +235,7 @@ export function toGoogleBlock(block: DesiredBlock, ruleTag: string, { update = f
     visibility: block.isPrivate ? "private" : "default",
     reminders: { useDefault: false, overrides: [] },
     // null on an update removes a colour the rule no longer uses; invalid IDs never reach Google.
-    colorId: block.color && /^(?:[1-9]|1[01])$/.test(block.color) ? block.color : null,
+    colorId: googleColor(block),
     extendedProperties: {
       private: {
         [GOOGLE_MARKER_KEY]: markerValueFor(ruleTag, block),

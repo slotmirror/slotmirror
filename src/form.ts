@@ -1,7 +1,9 @@
-import { MAX_BUFFER_MINUTES } from "./config";
+import { MAX_BUFFER_MINUTES, type Provider } from "./config";
 import {
   MAX_CATEGORY_LENGTH,
+  MAX_PASS_CATEGORIES,
   type AccountWorkHours,
+  type PassPair,
   type RuleDetailsProblem,
   type SettingsForm,
 } from "./editor";
@@ -54,6 +56,66 @@ export function categoryNames(list: string): string[] {
   return [...new Set(names)].slice(0, 50);
 }
 
+/**
+ * The carried categories of one direction from a form. Between two calendars of one provider the
+ * field is one list: "passCategories" (a comma list of Outlook names) or the ticked "passColor"
+ * boxes (Google), with an empty target. Between providers each row sends one "passFrom" and one
+ * "passTo" field, in the order of the rows, so the n-th of each name is one row. A select always
+ * sends a value and a text field always sends its text, so the two lists line up. The row's text
+ * field decides: if it is empty, the row is blank, whatever the colour says. That clears a saved
+ * row and ignores the empty row at the end. Values are only split here: `passCategoriesFor`
+ * refuses names and lists over the limits, as it does for the batch path, instead of dropping
+ * them.
+ */
+export function passPairsFromForm(form: FormData, source: Provider, target: Provider): PassPair[] {
+  if (source === target) {
+    const list =
+      source === "google"
+        ? form.getAll("passColor").filter((value) => typeof value === "string")
+        : formText(form, "passCategories")
+            .split(",")
+            .map((name) => name.trim())
+            .filter((name) => name !== "");
+    return list.map((from) => ({ from, to: "" }));
+  }
+  const texts = (name: string) =>
+    form.getAll(name).map((value) => (typeof value === "string" ? value.trim() : ""));
+  const froms = texts("passFrom");
+  const tos = texts("passTo");
+  const pairs: PassPair[] = [];
+  for (let index = 0; index < Math.max(froms.length, tos.length); index++) {
+    const from = froms[index] ?? "";
+    const to = tos[index] ?? "";
+    // The text side is the name of the Outlook category: the source for Outlook to Google.
+    if ((source === "google" ? to : from) === "") continue;
+    pairs.push({ from, to });
+  }
+  return pairs;
+}
+
+/**
+ * The carried categories of the batch path: one JSON list of [from, to] pairs per direction.
+ * JSON, because an Outlook category name can hold any character except a comma, so no separator
+ * is safe, and a pair must stay together. Null if the text is not a list of string pairs.
+ */
+export function passPairsFromJson(text: string): PassPair[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value)) return null;
+  const pairs: PassPair[] = [];
+  for (const entry of value as unknown[]) {
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const [from, to] = entry as unknown[];
+    if (typeof from !== "string" || typeof to !== "string") return null;
+    pairs.push({ from, to });
+  }
+  return pairs;
+}
+
 /** Why rule details were refused, in the user's words. */
 export function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): string {
   switch (problem.kind) {
@@ -67,8 +129,16 @@ export function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): stri
       return t.editor.workHoursMissing(problem.account);
     case "onlyCategories":
       return t.editor.onlyCategoriesGoogle;
+    case "passCategories":
+      return {
+        from: t.editor.passCategoriesFrom,
+        to: t.editor.passCategoriesTo,
+        incomplete: t.editor.passCategoriesIncomplete,
+        tooMany: t.editor.passCategoriesTooMany(MAX_PASS_CATEGORIES),
+      }[problem.reason];
     case "direction":
       if (problem.field === "onlyCategories") return t.editor.onlyCategoriesDirection;
+      if (problem.field === "passCategories") return t.editor.passCategoriesDirection;
       return problem.field === "color" ? t.editor.blockColorInvalid : t.editor.workHoursDirection;
   }
 }

@@ -35,6 +35,8 @@ import {
   formText,
   minutes,
   onlyCategoriesField,
+  passPairsFromForm,
+  passPairsFromJson,
   ruleDetailsError,
   settingsFrom,
 } from "../form";
@@ -273,7 +275,8 @@ rules.post("/direction", async (c) => {
 
 // All unsaved changes of the page, sent by the editor script: fields "calendar.<id>",
 // "choice.<from>.<to>" (a level, see `parseLevel`), "blockColor.<from>.<to>", "workHours.<from>.<to>" ("1" or "0"),
-// "onlyCategories.<from>.<to>" (a comma list), the buffer of a source "bufferBefore.<from>" and
+// "onlyCategories.<from>.<to>" (a comma list), "passCategories.<from>.<to>" (a JSON list of
+// [from, to] pairs, see `passPairsFromJson`), the buffer of a source "bufferBefore.<from>" and
 // "bufferAfter.<from>", and "settings.<name>". Every
 // field is checked before the first write, so that an invalid field refuses the whole save. The
 // writes are not one transaction: a D1 or Durable Object failure, or a rule that another request
@@ -325,6 +328,13 @@ rules.post("/choices", async (c) => {
       second ? [{ from: first, to: second, names: categoryNames(value) }] : [],
     ),
   };
+  const passCategories: NonNullable<RuleDetails["passCategories"]> = [];
+  for (const { first, second, value } of fields("passCategories")) {
+    const pairs = second ? passPairsFromJson(value) : null;
+    if (!second || !pairs) return refuse(c, t.editor.passCategoriesInvalid);
+    passCategories.push({ from: first, to: second, pairs });
+  }
+  details.passCategories = passCategories;
   const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
 
@@ -376,27 +386,47 @@ function isEditorField(name: string | undefined): boolean {
     name === "bufferBefore" ||
     name === "bufferAfter" ||
     name === "workHours" ||
-    name === "onlyCategories"
+    name === "onlyCategories" ||
+    name === "passCategories"
   );
 }
 
 // The details of one direction from the form without the editor script: the block colour and,
 // with "workHoursShown", the working-hours checkbox. "onlyCategoriesShown" marks a page with the
-// opt-in list, so that a page from before the option leaves the list alone.
+// opt-in list, so that a page from before the option leaves the list alone, and
+// "passCategoriesShown" does the same for the carried categories (see `passPairsFromForm`).
 rules.post("/direction/details", async (c) => {
   const user = currentUser(c);
   const { t } = i18nFromContext(c);
   const form = await c.req.formData();
   const from = formText(form, "from");
   const to = formText(form, "to");
+  const state = await loadEditorState(c.env, user.id);
+  const providerOf = (id: string) => state.accounts.find((account) => account.id === id)?.provider;
+  const sourceProvider = providerOf(from);
+  const targetProvider = providerOf(to);
   const details: RuleDetails = {
     colors: form.has("blockColor") ? [{ from, to, value: formText(form, "blockColor") }] : [],
     workHours: form.has("workHoursShown") ? [{ from, to, on: form.get("workHours") === "1" }] : [],
     onlyCategories: form.has("onlyCategoriesShown")
       ? [{ from, to, names: categoryNames(onlyCategoriesField(form)) }]
       : [],
+    passCategories:
+      form.has("passCategoriesShown") && sourceProvider && targetProvider
+        ? [
+            {
+              from,
+              to,
+              pairs: passPairsFromForm(form, sourceProvider, targetProvider),
+            },
+          ]
+        : [],
   };
-  const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
+  // An unknown account has no provider: the check below refuses it as a missing direction.
+  if (form.has("passCategoriesShown") && !(sourceProvider && targetProvider)) {
+    details.passCategories = [{ from, to, pairs: [] }];
+  }
+  const problem = ruleDetailsProblem(state, details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
   try {
     await setRuleDetails(c.env, user, details);

@@ -1117,6 +1117,65 @@ export function blockColorFor(provider: Provider, value: string): string | null 
   return trimmed.length <= MAX_CATEGORY_LENGTH && !trimmed.includes(",") ? trimmed : null;
 }
 
+/** Most categories that one direction carries into its copies. The schema allows the same. */
+export const MAX_PASS_CATEGORIES = 50;
+
+/** One category that a block carries: the source value and the target value. */
+export interface PassPair {
+  from: string;
+  to: string;
+}
+
+/** Why a list of carried categories is not valid for a direction. */
+export type PassProblem = "from" | "to" | "incomplete" | "tooMany";
+
+/**
+ * Check and normalise the carried categories of a direction. `from` must fit the source: a Google
+ * colour as `color:<id>`, or an Outlook name. `to` must fit the target as a block colour does. An
+ * empty `to` means the same value as `from`, which only fits two calendars of one provider. Values
+ * are trimmed, and a row without `from` is an empty row and is dropped. A repeated row (without
+ * case) is dropped: across providers a row whose `from` and `to` both repeat an earlier row,
+ * between calendars of one provider a row whose `from` repeats.
+ */
+export function passCategoriesFor(
+  source: Provider,
+  target: Provider,
+  pairs: readonly PassPair[],
+): { pairs: PassPair[] } | { problem: PassProblem } {
+  const seen = new Set<string>();
+  const result: PassPair[] = [];
+  for (const pair of pairs) {
+    const from = pair.from.trim();
+    if (from === "") {
+      // The name decides whether a row exists. From Google to Outlook the name is the target, so
+      // a name without a colour is a row that lacks its source, not an empty row.
+      if (source === "google" && target !== "google" && pair.to.trim() !== "") {
+        return { problem: "incomplete" };
+      }
+      continue;
+    }
+    const fits =
+      source === "google"
+        ? GOOGLE_COLOR_CATEGORY.test(from)
+        : blockColorFor("microsoft", from) !== null;
+    if (!fits) return { problem: "from" };
+    const to = blockColorFor(target, pair.to);
+    if (to === null) return { problem: "to" };
+    if (to === "" && source !== target) return { problem: "incomplete" };
+    // Across providers a row pairs two different values, so one colour can map to several names
+    // and only a repeated pair is a repeated row. Between calendars of one provider the panel
+    // shows one list of names, which cannot hold two rows of one name: the first row wins.
+    const rowKey = JSON.stringify(
+      source === target ? [from.toLowerCase()] : [from.toLowerCase(), to.toLowerCase()],
+    );
+    if (seen.has(rowKey)) continue;
+    seen.add(rowKey);
+    result.push({ from, to });
+  }
+  if (result.length > MAX_PASS_CATEGORIES) return { problem: "tooMany" };
+  return { pairs: result };
+}
+
 /**
  * Options that belong to a source account, not to a direction: every rule from the account shares
  * them. The account stores them, so that they stay while the account has no rules, and new rules
@@ -1207,12 +1266,15 @@ export function sourceBuffer(
  * - `workHours`: per direction, true copies the target account's working hours into the rules,
  *   false clears them.
  * - `onlyCategories`: per direction, the opt-in list of its rules. An empty list is no filter.
+ * - `passCategories`: per direction, the categories that its blocks carry from the source event.
+ *   An empty list carries none.
  * - `sources`: per source account, options for the account and every rule from it.
  */
 export interface RuleDetails {
   colors?: { from: string; to: string; value: string }[];
   workHours?: { from: string; to: string; on: boolean }[];
   onlyCategories?: { from: string; to: string; names: string[] }[];
+  passCategories?: { from: string; to: string; pairs: PassPair[] }[];
   sources?: { from: string; options: Partial<SourceOptions> }[];
 }
 
@@ -1223,8 +1285,12 @@ export type RuleDetailsProblem =
   | { kind: "noWorkHours"; account: string }
   /** A Google source has colours only, so a name would stop every event of the direction. */
   | { kind: "onlyCategories" }
+  | { kind: "passCategories"; reason: PassProblem }
   /** The direction is not the user's, or no longer exists. */
-  | { kind: "direction"; field: "color" | "workHours" | "onlyCategories" };
+  | {
+      kind: "direction";
+      field: "color" | "workHours" | "onlyCategories" | "passCategories";
+    };
 
 /**
  * Check rule details against a state before anything is written, so that an invalid detail
@@ -1260,6 +1326,14 @@ export function ruleDetailsProblem(
     if (source.provider === "google" && !names.every((name) => GOOGLE_COLOR_CATEGORY.test(name))) {
       return { kind: "onlyCategories" };
     }
+  }
+  for (const { from, to, pairs } of details.passCategories ?? []) {
+    const source = state.accounts.find((account) => account.id === from);
+    const target = state.accounts.find((account) => account.id === to);
+    const known = state.directions.some((d) => d.from === from && d.to === to);
+    if (!source || !target || !known) return { kind: "direction", field: "passCategories" };
+    const checked = passCategoriesFor(source.provider, target.provider, pairs);
+    if ("problem" in checked) return { kind: "passCategories", reason: checked.problem };
   }
   return null;
 }
@@ -1331,6 +1405,14 @@ export async function setRuleDetails(
   for (const { from, to, names } of details.onlyCategories ?? []) {
     const direction = state.directions.find((d) => d.from === from && d.to === to);
     if (direction) forDirection(direction, { onlyCategories: names });
+  }
+  for (const { from, to, pairs } of details.passCategories ?? []) {
+    const source = state.accounts.find((account) => account.id === from);
+    const target = state.accounts.find((account) => account.id === to);
+    const direction = state.directions.find((d) => d.from === from && d.to === to);
+    if (!source || !target || !direction) continue;
+    const checked = passCategoriesFor(source.provider, target.provider, pairs);
+    if ("pairs" in checked) forDirection(direction, { passCategories: checked.pairs });
   }
   await writePatches(env, user, patches, accounts, syncs);
   return true;
@@ -1459,14 +1541,18 @@ async function writePatches(
 
 /**
  * The audit detail of a change of rule details: what changed, without the user's own words. The
- * category name of the colour and the category names of the filter stay out; the log records that
- * the colour changed and how many names the filter has.
+ * category name of the colour and the category names of the filter and of the carried categories
+ * stay out; the log records that the colour changed and how many entries each list has.
  */
 function detailChanges(old: RuleOptions, options: RuleOptions): Record<string, string> {
   const detail: Record<string, string> = {};
   if (options.blockColor !== old.blockColor) detail.blockColor = "changed";
   if (options.onlyCategories.join("\u0000") !== old.onlyCategories.join("\u0000")) {
     detail.onlyCategories = String(options.onlyCategories.length);
+  }
+  // Carried categories are the user's own words too; the log keeps the count.
+  if (JSON.stringify(options.passCategories) !== JSON.stringify(old.passCategories)) {
+    detail.passCategories = String(options.passCategories.length);
   }
   if (options.bufferBefore !== old.bufferBefore || options.bufferAfter !== old.bufferAfter) {
     detail.bufferBefore = String(options.bufferBefore);
@@ -1483,20 +1569,27 @@ function detailChanges(old: RuleOptions, options: RuleOptions): Record<string, s
 
 /**
  * The details of one direction that a save sends with its level (see `setDirections`): the colour
- * of the copies, working hours on or off, the list of categories. A missing field stays as it is.
+ * of the copies, working hours on or off, the list of categories, the carried categories. A
+ * missing field stays as it is.
  */
 export interface DirectionDetails {
   blockColor?: string;
   workHours?: boolean;
   onlyCategories?: string[];
+  passCategories?: PassPair[];
 }
 
 /**
  * The option patch of direction details for a target, as `setRuleDetails` writes them. A colour
  * that the target's provider refuses is left out; `ruleDetailsProblem` refuses it before a save.
- * Working hours turned on copy the target's; a target without hours leaves the rules' own.
+ * Working hours turned on copy the target's; a target without hours leaves the rules' own. Carried
+ * categories are stored as `passCategoriesFor` normalises them; a list it refuses is left out.
  */
-function directionPatch(target: EditorAccount, details: DirectionDetails): Partial<RuleOptions> {
+function directionPatch(
+  source: EditorAccount,
+  target: EditorAccount,
+  details: DirectionDetails,
+): Partial<RuleOptions> {
   const patch: Partial<RuleOptions> = {};
   if (details.blockColor !== undefined) {
     const blockColor = blockColorFor(target.provider, details.blockColor);
@@ -1505,6 +1598,10 @@ function directionPatch(target: EditorAccount, details: DirectionDetails): Parti
   if (details.workHours === false) Object.assign(patch, NO_WORKING_HOURS);
   else if (details.workHours === true && target.workHours) Object.assign(patch, target.workHours);
   if (details.onlyCategories !== undefined) patch.onlyCategories = details.onlyCategories;
+  if (details.passCategories !== undefined) {
+    const checked = passCategoriesFor(source.provider, target.provider, details.passCategories);
+    if ("pairs" in checked) patch.passCategories = checked.pairs;
+  }
   return patch;
 }
 
@@ -1736,7 +1833,8 @@ export async function setDirections(
     // The mark a bare choice keeps: the direction's own while it is copied, else the default. A
     // disabled rule's mark is stale: it is the one it had when it was turned off.
     const keptMark = directionMarksPrivate(direction) ?? state.settings.markPrivate;
-    const patch = choice === "off" || !change.details ? {} : directionPatch(to, change.details);
+    const patch =
+      choice === "off" || !change.details ? {} : directionPatch(from, to, change.details);
     const firstStatement = statements.length;
 
     // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an
@@ -2215,9 +2313,9 @@ export async function setSourceCalendar(
 }
 
 /**
- * Undo an exception: back to the group's busy, or no rule outside the group. The block colour
- * and the working hours go back to none too, and the private mark to the one of the settings, so
- * that the direction is the plain default again.
+ * Undo an exception: back to the group's busy, or no rule outside the group. The block colour,
+ * the working hours, the opt-in list and the carried categories go back to none too, and the
+ * private mark to the one of the settings, so that the direction is the plain default again.
  * The buffer stays: it belongs to the source, not to the direction. A group direction can still
  * get a colour later; that does not make it an exception. A read-only target stays as it is:
  * `can_edit` can be wrong, so a reset must not remove blocks there. "Off" is the explicit way.
@@ -2243,11 +2341,15 @@ export async function resetDirection(
     const markPrivate = choice === "busy" ? state.settings.markPrivate : undefined;
     await setDirections(env, user, [{ from: fromId, to: toId, choice, markPrivate }], syncs);
     await setBlockColor(env, user, fromId, toId, "", syncs);
-    // Last, so that a rule that goes away never runs without its list.
+    // Last, so that a rule that goes away never runs without its list. The carried categories go
+    // too: they are an opt-in of the exception, not of the group.
     await setRuleDetails(
       env,
       user,
-      { onlyCategories: [{ from: fromId, to: toId, names: [] }] },
+      {
+        onlyCategories: [{ from: fromId, to: toId, names: [] }],
+        passCategories: [{ from: fromId, to: toId, pairs: [] }],
+      },
       syncs,
     );
   } finally {

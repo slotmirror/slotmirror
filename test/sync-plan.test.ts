@@ -943,3 +943,98 @@ describe("planSync in a sync window", () => {
     expect(plan.stats).toEqual({ create: 2, update: 0, delete: 0, unchanged: 0 });
   });
 });
+
+describe("passed categories", () => {
+  function event(categories: string[], overrides: Partial<SourceEvent> = {}): SourceEvent {
+    return {
+      occurrenceKey: "event:x",
+      start: "2026-10-26T10:00:00.000Z",
+      end: "2026-10-26T11:00:00.000Z",
+      allDay: false,
+      showAs: "busy",
+      isPrivate: false,
+      declined: false,
+      categories,
+      subject: "x",
+      location: "",
+      body: "",
+      isMirror: false,
+      ...overrides,
+    };
+  }
+
+  async function blockFor(source: SourceEvent, passCategories: RuleOptions["passCategories"]) {
+    const [block] = await desiredBlocks(RULE, [source], options({ passCategories }));
+    if (!block) throw new Error("no block");
+    return block;
+  }
+
+  it("leaves the content hash of every block as it was without a match", async () => {
+    const source = event(["Focus", "color:5"]);
+    const [plain] = await desiredBlocks(RULE, [source], options());
+    const empty = await blockFor(source, []);
+    const other = await blockFor(source, [
+      { from: "Kunde", to: "Customer" },
+      { from: "color:6", to: "" },
+      { from: "  ", to: "Blank" },
+    ]);
+    for (const block of [plain!, empty, other]) {
+      expect(block).not.toHaveProperty("categories");
+      expect(block.contentHash).toBe(plain!.contentHash);
+      expect(JSON.stringify(block)).toBe(JSON.stringify(plain));
+    }
+  });
+
+  it("takes the source name for a blank target between Outlook calendars", async () => {
+    const block = await blockFor(event(["Focus"]), [{ from: "Focus", to: "" }]);
+    expect(block.categories).toEqual(["Focus"]);
+  });
+
+  it("takes the colour ID for a blank target between Google calendars", async () => {
+    const block = await blockFor(event(["color:5"]), [{ from: "color:5", to: " " }]);
+    expect(block.categories).toEqual(["5"]);
+  });
+
+  it("keeps a colour prefix in an Outlook name for a blank target", async () => {
+    const block = await blockFor(event(["color:Focus"]), [{ from: "color:Focus", to: "" }]);
+    expect(block.categories).toEqual(["color:Focus"]);
+  });
+
+  it("maps an Outlook name to a Google colour and a Google colour to an Outlook name", async () => {
+    const toGoogle = await blockFor(event(["Focus"]), [{ from: "Focus", to: "9" }]);
+    expect(toGoogle.categories).toEqual(["9"]);
+    const toOutlook = await blockFor(event(["color:5"]), [{ from: "color:5", to: "Fokus" }]);
+    expect(toOutlook.categories).toEqual(["Fokus"]);
+  });
+
+  it("compares the source category trimmed and without case", async () => {
+    const block = await blockFor(event(["FOCUS "]), [{ from: " focus", to: " Deep work " }]);
+    expect(block.categories).toEqual(["Deep work"]);
+  });
+
+  it("keeps list order and drops repeated targets, compared without case", async () => {
+    const block = await blockFor(event(["b", "a"]), [
+      { from: "a", to: "X" },
+      { from: "c", to: "Z" },
+      { from: "B", to: "x" },
+      { from: "A", to: "Y" },
+      { from: "b", to: "" },
+    ]);
+    expect(block.categories).toEqual(["X", "Y", "b"]);
+  });
+
+  it("passes categories of an event the source marks private", async () => {
+    const block = await blockFor(event(["Focus"], { isPrivate: true, subject: "Secret" }), [
+      { from: "Focus", to: "Focus" },
+    ]);
+    expect(block).toMatchObject({ subject: "Busy", isPrivate: true, categories: ["Focus"] });
+  });
+
+  it("changes the content hash but not the dedup key", async () => {
+    const source = event(["Focus"]);
+    const [plain] = await desiredBlocks(RULE, [source], options());
+    const passed = await blockFor(source, [{ from: "Focus", to: "" }]);
+    expect(passed.contentHash).not.toBe(plain!.contentHash);
+    expect(passed.dedupKey).toBe(plain!.dedupKey);
+  });
+});

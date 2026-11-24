@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseRuleOptions, setupStatus } from "../src/config";
+import * as z from "zod/mini";
+import { parseRuleOptions, ruleOptionsSchema, setupStatus } from "../src/config";
 
 describe("parseRuleOptions", () => {
   it("fills defaults for an empty object", () => {
@@ -19,6 +20,7 @@ describe("parseRuleOptions", () => {
       workTimeZone: "",
       markPrivate: true,
       blockColor: "",
+      passCategories: [],
       bufferBefore: 0,
       bufferAfter: 0,
     });
@@ -32,6 +34,32 @@ describe("parseRuleOptions", () => {
     expect(Object.keys(options)).not.toEqual(
       expect.arrayContaining(["showOrigin", "linkOrigin", "originLocale"]),
     );
+  });
+
+  it("reads passed categories with a blank target by default", () => {
+    const options = parseRuleOptions(
+      '{"passCategories": [{"from": "Focus"}, {"from": "color:5", "to": "Fokus"}]}',
+    );
+    expect(options.passCategories).toEqual([
+      { from: "Focus", to: "" },
+      { from: "color:5", to: "Fokus" },
+    ]);
+    expect(() => parseRuleOptions('{"passCategories": [{"to": "Focus"}]}')).toThrow();
+    const many = JSON.stringify({ passCategories: Array(51).fill({ from: "a" }) });
+    expect(() => parseRuleOptions(many)).toThrow();
+  });
+
+  it("lets a Worker without passed categories read options that have them", () => {
+    // The previous Worker has the same object schema without the field. z.object drops unknown
+    // keys, so a rollback after a save with passed categories still reads the rule.
+    const { passCategories: _, ...previousShape } = ruleOptionsSchema.shape;
+    const previous = z.object(previousShape);
+    const stored = { detailLevel: "title", passCategories: [{ from: "Focus", to: "" }] };
+    const parsed = previous.parse(stored);
+    expect(parsed.detailLevel).toBe("title");
+    expect(parsed).not.toHaveProperty("passCategories");
+    // Control: a strict copy refuses the same input, so the test reads the key handling.
+    expect(() => z.strictObject(previousShape).parse(stored)).toThrow();
   });
 
   it("accepts buffers from 0 to 240 whole minutes", () => {

@@ -2,8 +2,10 @@ import {
   CHOICES,
   EditorConflict,
   MAX_CATEGORY_LENGTH,
+  MAX_PASS_CATEGORIES,
   levelOf,
   loadEditorState,
+  passCategoriesFor,
   requestSyncs,
   ruleDetailsProblem,
   setDefaultBlockTitle,
@@ -11,6 +13,8 @@ import {
   setRuleDetails,
   setSettings,
   type DirectionDetails,
+  type EditorAccount,
+  type PassPair,
   type RuleDetails,
   type RuleDetailsProblem,
 } from "./editor";
@@ -21,6 +25,7 @@ import {
   categoryNames,
   formText,
   onlyCategoriesField,
+  passPairsFromForm,
   ruleDetailsError,
   settingsFrom,
 } from "./form";
@@ -34,7 +39,7 @@ import { directionVersion, isStale, settingsVersion } from "./versions";
  */
 
 /** A form field that a refusal is about, so that the panel can show the reason at the field. */
-export type MirroringField = "blockColor" | "onlyCategories" | "who";
+export type MirroringField = "blockColor" | "onlyCategories" | "passCategories" | "who";
 
 /**
  * The end of a save. A refusal names its reason in the user's words, and the field if one field
@@ -54,7 +59,12 @@ function refuse(error: string, field?: MirroringField): MirroringSave {
 }
 
 /** A refused detail: at its field if the person can fix it there, else for the whole panel. */
-function detailsRefusal(t: Messages, problem: RuleDetailsProblem): MirroringSave {
+function detailsRefusal(
+  t: Messages,
+  problem: RuleDetailsProblem,
+  source: EditorAccount | undefined,
+  target: EditorAccount,
+): MirroringSave {
   const text = t.next.mirroring.fieldErrors;
   if (problem.kind === "color") {
     if (problem.problem === "comma") return refuse(text.categoryComma, "blockColor");
@@ -64,6 +74,19 @@ function detailsRefusal(t: Messages, problem: RuleDetailsProblem): MirroringSave
     return refuse(text.colorInvalid, "blockColor");
   }
   if (problem.kind === "onlyCategories") return refuse(text.onlyGoogle, "onlyCategories");
+  if (problem.kind === "passCategories") {
+    // The side that does not fit: a Google colour comes from a list, a name is typed.
+    const side = problem.reason === "from" ? source : problem.reason === "to" ? target : undefined;
+    const reason =
+      problem.reason === "incomplete"
+        ? text.passIncomplete
+        : problem.reason === "tooMany"
+          ? text.passTooMany(MAX_PASS_CATEGORIES)
+          : side?.provider === "google"
+            ? text.colorInvalid
+            : text.passName(MAX_CATEGORY_LENGTH);
+    return refuse(reason, "passCategories");
+  }
   return refuse(ruleDetailsError(t, problem));
 }
 
@@ -89,6 +112,7 @@ export async function saveMirroring(
   const to = formText(form, "to");
   const state = await loadEditorState(env, user.id);
   const direction = state.directions.find((d) => d.from === from && d.to === to);
+  const source = state.accounts.find((account) => account.id === from);
   const target = state.accounts.find((account) => account.id === to);
   if (!direction || !target) return refuse(t.editor.choiceInvalid);
   // Before any other check: a refusal of a stale form would show values that are not stored.
@@ -145,6 +169,10 @@ export async function saveMirroring(
       const stored = options?.onlyCategories ?? [];
       if (names.join("\n") !== stored.join("\n")) details.onlyCategories = names;
     }
+    if (form.has("passCategoriesShown") && source) {
+      const pairs = passCategoriesOf(form, source, target, options?.passCategories ?? []);
+      if (pairs) details.passCategories = pairs;
+    }
   }
   const ruleDetails: RuleDetails = {
     ...(details.blockColor === undefined
@@ -156,9 +184,12 @@ export async function saveMirroring(
     ...(details.onlyCategories === undefined
       ? {}
       : { onlyCategories: [{ from, to, names: details.onlyCategories }] }),
+    ...(details.passCategories === undefined
+      ? {}
+      : { passCategories: [{ from, to, pairs: details.passCategories }] }),
   };
   const problem = ruleDetailsProblem(state, ruleDetails);
-  if (problem) return detailsRefusal(t, problem);
+  if (problem) return detailsRefusal(t, problem, source, target);
 
   const hasDetails = Object.keys(ruleDetails).length > 0;
   // A level can create the user's first rule, which gets the block title in the user's language.
@@ -194,6 +225,36 @@ export async function saveMirroring(
     await requestSyncs(env, syncs);
   }
   return SAVED;
+}
+
+/**
+ * The carried categories of the form, or null if they match the stored ones. A list that
+ * `passCategoriesFor` refuses is returned as it is, so that the check refuses the save. Between two
+ * calendars of one provider the form lists names only: a stored target of a name (from the batch
+ * path) stays with the name, so that a save of the panel never drops it.
+ */
+function passCategoriesOf(
+  form: FormData,
+  source: EditorAccount,
+  target: EditorAccount,
+  stored: readonly PassPair[],
+): PassPair[] | null {
+  const pairs = passPairsFromForm(form, source.provider, target.provider).map((pair) => {
+    if (source.provider !== target.provider) return pair;
+    const kept = stored.find((entry) => entry.from.toLowerCase() === pair.from.toLowerCase());
+    return kept ? { from: pair.from, to: kept.to } : pair;
+  });
+  const checked = passCategoriesFor(source.provider, target.provider, pairs);
+  if ("problem" in checked) return pairs;
+  // A Google event has one colour, so the order of the boxes says nothing: the panel draws them in
+  // the order of the palette, which need not be the stored one.
+  const key = (list: readonly PassPair[]) => {
+    const entries = list.map((pair) => JSON.stringify([pair.from, pair.to]));
+    return (
+      source.provider === "google" && target.provider === "google" ? entries.sort() : entries
+    ).join();
+  };
+  return key(checked.pairs) === key(stored) ? null : checked.pairs;
 }
 
 /**
