@@ -168,7 +168,7 @@ version later, see [Updating your deployment](../updating/).
 
 ## Choose where events go
 
-![Connected accounts, in the previous interface](../../../../../docs/images/accounts.png)
+![Connected calendars on the Calendars page](../../../../../docs/images/accounts.png)
 
 1. Connect each calendar on the **Calendars** page with **Connect calendar**.
 2. Open **Mirroring** and choose **Mirror all as busy**. Each calendar then shows the events of
@@ -182,4 +182,4 @@ version later, see [Updating your deployment](../updating/).
 On the **Calendars** page you also choose which calendars of one account are copied. Open the
 panel of the account, and turn on the calendars under **Copy from these calendars**.
 
-![A source card with several calendars of one account, in the previous interface](../../../../../docs/images/source-calendars.png)
+![The panel of one account with several calendars to copy from](../../../../../docs/images/source-calendars.png)
