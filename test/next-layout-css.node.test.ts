@@ -160,10 +160,15 @@ describe("controls and type", () => {
 });
 
 describe("frame and panel", () => {
-  it("caps the frame of the list pages at list plus panel, so the panel never ends in mid-air", () => {
-    expect(rule(base, ".frame:not(.is-wide)")).toContain(
-      "max-width: calc(var(--content-max) + var(--panel-w) + 2px);",
-    );
+  it("lets the frame fill the window and docks the panel at its right edge", () => {
+    // A cap on the frame left an empty strip of chrome right of it on wide screens.
+    expect(base).not.toMatch(/\.frame:not\(\.is-wide\)\s*\{[^}]*max-width/);
+    expect(base).not.toMatch(/\.frame\.has-panel \.workspace\s*\{[^}]*max-width/);
+    // The pane takes the free space and the panel keeps its width, so the panel sits at the edge.
+    expect(rule(base, ".workspace")).toContain("flex: 1;");
+    expect(rule(base, ".pane")).toContain("flex: 1;");
+    expect(rule(base, ".detail")).toContain("flex: none;");
+    expect(rule(base, ".detail")).toContain("width: var(--panel-w);");
   });
 
   it("keeps a hint under its control when the label wraps", () => {
