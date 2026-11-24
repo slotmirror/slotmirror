@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.3.0...slotmirror-v0.4.0) (2026-11-24)
+
+
+### Features
+
+* **rules:** carry chosen source categories onto mirrored blocks ([#120](https://github.com/slotmirror/slotmirror/issues/120)) ([57f8d96](https://github.com/slotmirror/slotmirror/commit/57f8d96277477e66f891af2d2b03aed02560eeef))
+* **rules:** show carried copies from google as tentative in outlook ([#123](https://github.com/slotmirror/slotmirror/issues/123)) ([c5d5d2e](https://github.com/slotmirror/slotmirror/commit/c5d5d2ead2cba0ba8c2435264c0c54f774fed803))
+
+
+### Bug fixes
+
+* **ui:** let the frame fill the window and dock the panel at its edge ([#122](https://github.com/slotmirror/slotmirror/issues/122)) ([c4c2e6b](https://github.com/slotmirror/slotmirror/commit/c4c2e6b4de10a157e6142f7a70b22cbd8c77d75d))
+
+
+### Documentation
+
+* note the asset folder for deployments with their own config ([#121](https://github.com/slotmirror/slotmirror/issues/121)) ([60316f0](https://github.com/slotmirror/slotmirror/commit/60316f0218bd1603f5696cf8612f663dc242eae1))
+* show the new interface in the screenshots and the demo ([#119](https://github.com/slotmirror/slotmirror/issues/119)) ([b16d8ca](https://github.com/slotmirror/slotmirror/commit/b16d8ca08f15145e092110e10218043f862b1758))
+
 ## [0.3.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.2.0...slotmirror-v0.3.0) (2026-11-23)
 
 
