@@ -156,7 +156,17 @@ This release replaces the interface. Read this section before you update.
   Worker runs on the new schema.
 - **Assets are built.** The deploy step now builds the static files into `dist/public`, with the
   content hash in each file name. `wrangler deploy` runs this build through the `build` command in
-  `wrangler.jsonc`, so no extra step is needed.
+  `wrangler.jsonc`, so no extra step is needed. If you deploy with your own config file
+  (`wrangler deploy -c <file>`), set the assets directory and copy the `build` entry from
+  `wrangler.jsonc`:
+
+  ```jsonc
+  "assets": { "directory": "./dist/public" },
+  "build": { "command": "node scripts/asset-manifest.mjs", "watch_dir": "public" },
+  ```
+
+  After the deploy, open a page and check that the styles load. A 404 for `/next` files means the
+  old `./public` directory is still set.
 
 ## After the update
 
