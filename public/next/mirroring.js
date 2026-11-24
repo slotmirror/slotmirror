@@ -62,17 +62,24 @@
   });
 
   // "Add a row" of the carried categories between providers: a copy of the last row, empty. The
-  // rows send their fields in order, so a new row needs no index of its own. Its fields count as
-  // unchanged until the person fills them: the empty value is also their default.
+  // rows send their fields in order, so the fields need no index of their own. A "Tentative"
+  // switch sends nothing while it is off, so it sends the index of its row: the new row gets the
+  // next one, unticked. Its fields count as unchanged until the person fills them: the empty value
+  // is also their default.
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-pass-add]") : null;
     const rows = button?.closest(".prop")?.querySelector(".mx-pass-rows");
     const last = rows?.lastElementChild;
     if (!last) return;
     const row = last.cloneNode(true);
+    const index = String(rows.children.length);
     for (const field of row.querySelectorAll("input, select")) {
       field.removeAttribute("aria-invalid");
-      if (field.localName === "select") {
+      if (field.type === "checkbox") {
+        field.defaultChecked = false;
+        field.checked = false;
+        field.value = index;
+      } else if (field.localName === "select") {
         for (const option of field.options) {
           option.defaultSelected = option.value === "";
           option.selected = option.value === "";

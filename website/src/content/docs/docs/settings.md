@@ -185,6 +185,13 @@ passes unless it is listed.
 - From Outlook to Google, each row pairs a category name with the colour that the copy gets.
 - From Google to Outlook, each row pairs a colour with the category name that the copy gets.
 - From Google to Outlook, one colour can have several rows. The copy then carries each name.
+- From Google to Outlook, a row can also show the copy as tentative. Turn on **Tentative** in the
+  row. A busy event in that colour then shows as tentative in Outlook, so that others see that the
+  time can move. Google has no tentative status for an event that you made yourself. A free or
+  tentative event keeps its status. Turn the switch off, and the copy shows as busy again. If one
+  row of a colour has the switch on, every copy in that colour shows as tentative.
+- A tentative copy never stands in for a busy one. If another mirroring copies the same event as
+  busy into the same calendar, that calendar shows both copies.
 
 The panel shows the saved rows and one empty row. Choose **Add a row** for more rows. Without
 JavaScript, fill the empty row and save; the panel then shows a new empty row. In a row, clear the

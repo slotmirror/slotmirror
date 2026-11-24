@@ -1120,14 +1120,29 @@ export function blockColorFor(provider: Provider, value: string): string | null 
 /** Most categories that one direction carries into its copies. The schema allows the same. */
 export const MAX_PASS_CATEGORIES = 50;
 
-/** One category that a block carries: the source value and the target value. */
+/**
+ * One category that a block carries: the source value and the target value. `tentative` shows the
+ * block of a busy event as tentative; it fits a direction from Google to Outlook only.
+ */
 export interface PassPair {
   from: string;
   to: string;
+  tentative?: boolean;
 }
 
-/** Why a list of carried categories is not valid for a direction. */
-export type PassProblem = "from" | "to" | "incomplete" | "tooMany";
+/** A carried category as a rule stores it. */
+export type StoredPassPair = Required<PassPair>;
+
+/**
+ * Why a list of carried categories is not valid for a direction. `tentative`: a row asks for a
+ * tentative copy in a direction other than Google to Outlook.
+ */
+export type PassProblem = "from" | "to" | "incomplete" | "tooMany" | "tentative";
+
+/** True if copies of a direction can show as tentative through a carried category. */
+export function canPassTentative(source: Provider, target: Provider): boolean {
+  return source === "google" && target === "microsoft";
+}
 
 /**
  * Check and normalise the carried categories of a direction. `from` must fit the source: a Google
@@ -1135,15 +1150,17 @@ export type PassProblem = "from" | "to" | "incomplete" | "tooMany";
  * empty `to` means the same value as `from`, which only fits two calendars of one provider. Values
  * are trimmed, and a row without `from` is an empty row and is dropped. A repeated row (without
  * case) is dropped: across providers a row whose `from` and `to` both repeat an earlier row,
- * between calendars of one provider a row whose `from` repeats.
+ * between calendars of one provider a row whose `from` repeats. The first row wins, also if a
+ * repeated row has another `tentative`. A row with `tentative` outside Google to Outlook is
+ * refused, not dropped: the person asked for something that the target would not show.
  */
 export function passCategoriesFor(
   source: Provider,
   target: Provider,
   pairs: readonly PassPair[],
-): { pairs: PassPair[] } | { problem: PassProblem } {
+): { pairs: StoredPassPair[] } | { problem: PassProblem } {
   const seen = new Set<string>();
-  const result: PassPair[] = [];
+  const result: StoredPassPair[] = [];
   for (const pair of pairs) {
     const from = pair.from.trim();
     if (from === "") {
@@ -1162,6 +1179,8 @@ export function passCategoriesFor(
     const to = blockColorFor(target, pair.to);
     if (to === null) return { problem: "to" };
     if (to === "" && source !== target) return { problem: "incomplete" };
+    const tentative = pair.tentative === true;
+    if (tentative && !canPassTentative(source, target)) return { problem: "tentative" };
     // Across providers a row pairs two different values, so one colour can map to several names
     // and only a repeated pair is a repeated row. Between calendars of one provider the panel
     // shows one list of names, which cannot hold two rows of one name: the first row wins.
@@ -1170,7 +1189,7 @@ export function passCategoriesFor(
     );
     if (seen.has(rowKey)) continue;
     seen.add(rowKey);
-    result.push({ from, to });
+    result.push({ from, to, tentative });
   }
   if (result.length > MAX_PASS_CATEGORIES) return { problem: "tooMany" };
   return { pairs: result };

@@ -151,6 +151,8 @@ export const en = {
     passCategoriesTooMany: (max: number) =>
       `A direction carries at most ${max} categories. Nothing was saved.`,
     passCategoriesInvalid: "The list of categories to carry could not be read. Nothing was saved.",
+    passCategoriesTentative:
+      "Only a mirroring from Google to Outlook can show its copies as tentative. Nothing was saved.",
     passCategoriesDirection:
       "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
     skipCategoriesLabel: "Skip events with these categories",

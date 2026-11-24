@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type * as z from "zod/mini";
 import { ruleOptionsSchema, type RuleOptions } from "../src/config";
 import { fromGoogleEvent, googleMarker, LEGACY_GOOGLE_MARKER_KEY } from "../src/sync/google-events";
 import {
@@ -13,7 +14,8 @@ import fixture from "./fixtures/graph/calendar-view.json";
 
 const RULE = "rule-1";
 
-function options(overrides: Partial<RuleOptions> = {}): RuleOptions {
+/** Options as a rule stores them; the schema fills defaults, such as `tentative` of a pair. */
+function options(overrides: z.input<typeof ruleOptionsSchema> = {}): RuleOptions {
   return ruleOptionsSchema.parse(overrides);
 }
 
@@ -963,7 +965,10 @@ describe("passed categories", () => {
     };
   }
 
-  async function blockFor(source: SourceEvent, passCategories: RuleOptions["passCategories"]) {
+  async function blockFor(
+    source: SourceEvent,
+    passCategories: z.input<typeof ruleOptionsSchema>["passCategories"],
+  ) {
     const [block] = await desiredBlocks(RULE, [source], options({ passCategories }));
     if (!block) throw new Error("no block");
     return block;
@@ -1036,5 +1041,134 @@ describe("passed categories", () => {
     const passed = await blockFor(source, [{ from: "Focus", to: "" }]);
     expect(passed.contentHash).not.toBe(plain!.contentHash);
     expect(passed.dedupKey).toBe(plain!.dedupKey);
+  });
+});
+
+describe("tentative copies of passed categories", () => {
+  function event(overrides: Partial<SourceEvent> = {}): SourceEvent {
+    return {
+      occurrenceKey: "event:t",
+      start: "2026-10-26T10:00:00.000Z",
+      end: "2026-10-26T11:00:00.000Z",
+      allDay: false,
+      showAs: "busy",
+      isPrivate: false,
+      declined: false,
+      categories: ["color:5"],
+      subject: "Plan",
+      location: "",
+      body: "",
+      isMirror: false,
+      ...overrides,
+    };
+  }
+
+  const TENTATIVE = [{ from: "color:5", to: "Focus", tentative: true }];
+  // Free and tentative events are skipped by default; these tests need their blocks.
+  const all = (passCategories: RuleOptions["passCategories"] = []) =>
+    options({ passCategories, skipFree: false, skipTentative: false });
+
+  async function blockOf(source: SourceEvent, opts: RuleOptions, ruleId = RULE) {
+    const [block] = await desiredBlocks(ruleId, [source], opts, { scope: "user" });
+    if (!block) throw new Error("no block");
+    return block;
+  }
+
+  it("shows a busy event as tentative if a tentative row matches", async () => {
+    const block = await blockOf(event(), all(TENTATIVE));
+    expect(block).toMatchObject({ showAs: "tentative", categories: ["Focus"] });
+    const unknown = await blockOf(event({ showAs: "unknown" }), all(TENTATIVE));
+    expect(unknown.showAs).toBe("tentative");
+  });
+
+  it("keeps free and tentative events as they are", async () => {
+    expect((await blockOf(event({ showAs: "free" }), all(TENTATIVE))).showAs).toBe("free");
+    expect((await blockOf(event({ showAs: "tentative" }), all(TENTATIVE))).showAs).toBe(
+      "tentative",
+    );
+  });
+
+  it("leaves every block as it was without a tentative row that matches", async () => {
+    const source = event();
+    const plain = await blockOf(source, all());
+    const cases: RuleOptions["passCategories"][] = [
+      [{ from: "color:5", to: "Focus", tentative: false }],
+      [{ from: "color:6", to: "Focus", tentative: true }],
+      [{ from: "  ", to: "Focus", tentative: true }],
+    ];
+    const withName = await blockOf(source, all(cases[0]));
+    expect(withName).toMatchObject({ showAs: "busy", categories: ["Focus"] });
+    expect(withName.dedupKey).toBe(plain.dedupKey);
+    for (const passCategories of cases.slice(1)) {
+      const block = await blockOf(source, all(passCategories));
+      expect(JSON.stringify(block)).toBe(JSON.stringify(plain));
+    }
+  });
+
+  it("makes the copy tentative also if a row before it gives the same name", async () => {
+    // The name passes once; the mark belongs to every row whose source matches.
+    const block = await blockOf(
+      event(),
+      all([
+        { from: "color:5", to: "Focus", tentative: false },
+        { from: "color:5", to: "focus", tentative: true },
+      ]),
+    );
+    expect(block).toMatchObject({ showAs: "tentative", categories: ["Focus"] });
+  });
+
+  it("gives a tentative copy the dedup key of a tentative block, not of a busy one", async () => {
+    const tentative = await blockOf(event(), all(TENTATIVE));
+    const fromTentative = await blockOf(
+      event({ showAs: "tentative" }),
+      all([{ from: "color:5", to: "Focus", tentative: false }]),
+    );
+    const busy = await blockOf(event(), all([{ from: "color:5", to: "Focus", tentative: false }]));
+    expect(tentative.dedupKey).toBe(fromTentative.dedupKey);
+    expect(tentative.dedupKey).not.toBe(busy.dedupKey);
+  });
+
+  it("updates the existing copy in place when the mark is turned on and off", async () => {
+    const source = event();
+    const busy = await desiredBlocks(RULE, [source], all([{ ...TENTATIVE[0]!, tentative: false }]));
+    const existing = asExisting(busy);
+    const on = await desiredBlocks(RULE, [source], all(TENTATIVE));
+    const turnedOn = planSync(on, existing);
+    expect(turnedOn.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+    expect(turnedOn.actions[0]).toMatchObject({
+      kind: "update",
+      targetId: existing[0]!.targetId,
+      block: { showAs: "tentative", marker: busy[0]!.marker },
+    });
+    // The next run finds the updated copy as it wants it.
+    expect(planSync(on, asExisting(on)).stats).toEqual({
+      create: 0,
+      update: 0,
+      delete: 0,
+      unchanged: 1,
+    });
+    const turnedOff = planSync(busy, asExisting(on));
+    expect(turnedOff.stats).toEqual({ create: 0, update: 1, delete: 0, unchanged: 0 });
+    expect(turnedOff.actions[0]).toMatchObject({
+      kind: "update",
+      targetId: "target-0",
+      block: { showAs: "busy" },
+    });
+  });
+
+  it("lets a tentative copy of a rule with precedence stand in only for a tentative block", async () => {
+    // Rule A writes the event as tentative. Rule B reads the same event from another calendar
+    // without the mark: its busy block looks different, so B writes it. With the mark, B leaves
+    // the event out.
+    const source = event();
+    const claimed = claimsFrom([await blockOf(source, all(TENTATIVE), "rule-a")]);
+    const plainB = await desiredBlocks("rule-b", [source], all(), { scope: "user", claimed });
+    expect(plainB).toHaveLength(1);
+    expect(plainB[0]?.showAs).toBe("busy");
+    const markedB = await desiredBlocks("rule-b", [source], all(TENTATIVE), {
+      scope: "user",
+      claimed,
+    });
+    expect(markedB).toEqual([]);
   });
 });

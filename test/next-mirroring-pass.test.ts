@@ -9,7 +9,7 @@ import { en } from "../src/i18n/en";
 import { directionChanges } from "../src/pages/next/mirroring";
 import { BASE, signIn } from "./helpers";
 
-type Pair = { from: string; to: string };
+type Pair = { from: string; to: string; tentative?: boolean };
 
 /** A user with two Microsoft and two Google accounts, each with one main calendar. */
 async function setup(prefix: string) {
@@ -107,7 +107,7 @@ function save(cookie: string, body: URLSearchParams) {
   });
 }
 
-function saveBatch(cookie: string, name: string, pairs: string[][]) {
+function saveBatch(cookie: string, name: string, pairs: unknown[][]) {
   return exports.default.fetch(`${BASE}/rules/choices`, {
     method: "POST",
     redirect: "manual",
@@ -146,7 +146,7 @@ describe("carried categories in the mirroring panel", () => {
     const { user, cookie, w, o } = await setup("mpout");
     await setDirection(env, user, w, o, "busy");
     await setRuleDetails(env, user, {
-      passCategories: [{ from: w, to: o, pairs: [{ from: "Focus", to: "" }] }],
+      passCategories: [{ from: w, to: o, pairs: [{ from: "Focus", to: "", tentative: false }] }],
     });
     const row = passRow(await panel(cookie, w, o));
     expect(row).toContain(en.next.mirroring.pass.categories);
@@ -160,7 +160,7 @@ describe("carried categories in the mirroring panel", () => {
     const { user, cookie, g, h } = await setup("mpgoo");
     await setDirection(env, user, g, h, "busy");
     await setRuleDetails(env, user, {
-      passCategories: [{ from: g, to: h, pairs: [{ from: "color:5", to: "" }] }],
+      passCategories: [{ from: g, to: h, pairs: [{ from: "color:5", to: "", tentative: false }] }],
     });
     const row = passRow(await panel(cookie, g, h));
     expect(row).toContain(en.next.mirroring.pass.colors);
@@ -173,7 +173,7 @@ describe("carried categories in the mirroring panel", () => {
     const { user, cookie, w, g } = await setup("mprows");
     await setDirection(env, user, w, g, "busy");
     await setRuleDetails(env, user, {
-      passCategories: [{ from: w, to: g, pairs: [{ from: "Focus", to: "3" }] }],
+      passCategories: [{ from: w, to: g, pairs: [{ from: "Focus", to: "3", tentative: false }] }],
     });
     const row = passRow(await panel(cookie, w, g));
     expect(row.match(/class="mx-pass-row"/g)).toHaveLength(2);
@@ -191,7 +191,9 @@ describe("carried categories in the mirroring panel", () => {
     const { user, cookie, w, g } = await setup("mprowsg");
     await setDirection(env, user, g, w, "busy");
     await setRuleDetails(env, user, {
-      passCategories: [{ from: g, to: w, pairs: [{ from: "color:5", to: "Focus" }] }],
+      passCategories: [
+        { from: g, to: w, pairs: [{ from: "color:5", to: "Focus", tentative: false }] },
+      ],
     });
     const row = passRow(await panel(cookie, g, w));
     expect(row).toContain(en.next.mirroring.pass.colors);
@@ -220,8 +222,8 @@ describe("carried categories in the mirroring panel", () => {
     );
     expect(response.status).toBe(303);
     expect(await passOf(w, g)).toEqual([
-      { from: "Focus", to: "3" },
-      { from: "Reise; privat", to: "6" },
+      { from: "Focus", to: "3", tentative: false },
+      { from: "Reise; privat", to: "6", tentative: false },
     ]);
   });
 
@@ -243,7 +245,7 @@ describe("carried categories in the mirroring panel", () => {
         )
       ).status,
     ).toBe(303);
-    expect(await passOf(g, w)).toEqual([{ from: "color:5", to: "Focus" }]);
+    expect(await passOf(g, w)).toEqual([{ from: "color:5", to: "Focus", tentative: false }]);
     expect((await save(cookie, panelForm(g, w, rows([["color:5", ""]])))).status).toBe(303);
     expect(await passOf(g, w)).toEqual([]);
   });
@@ -340,7 +342,7 @@ describe("carried categories in the mirroring panel", () => {
     const { user, cookie, w, g } = await setup("mpquiet");
     await setDirection(env, user, w, g, "busy");
     await setRuleDetails(env, user, {
-      passCategories: [{ from: w, to: g, pairs: [{ from: "Focus", to: "3" }] }],
+      passCategories: [{ from: w, to: g, pairs: [{ from: "Focus", to: "3", tentative: false }] }],
     });
     const snapshot = () =>
       env.DB.prepare(
@@ -372,8 +374,8 @@ describe("carried categories in the mirroring panel", () => {
           from: g,
           to: h,
           pairs: [
-            { from: "color:5", to: "" },
-            { from: "color:1", to: "" },
+            { from: "color:5", to: "", tentative: false },
+            { from: "color:1", to: "", tentative: false },
           ],
         },
       ],
@@ -399,7 +401,7 @@ describe("carried categories in the mirroring panel", () => {
       204,
     );
     await save(cookie, panelForm(w, o, [["blockColor", "Blue"]]));
-    expect(await passOf(w, o)).toEqual([{ from: "Focus", to: "Work" }]);
+    expect(await passOf(w, o)).toEqual([{ from: "Focus", to: "Work", tentative: false }]);
     await save(
       cookie,
       panelForm(w, o, [
@@ -408,8 +410,8 @@ describe("carried categories in the mirroring panel", () => {
       ]),
     );
     expect(await passOf(w, o)).toEqual([
-      { from: "Focus", to: "Work" },
-      { from: "Deep", to: "" },
+      { from: "Focus", to: "Work", tentative: false },
+      { from: "Deep", to: "", tentative: false },
     ]);
   });
 
@@ -424,6 +426,151 @@ describe("carried categories in the mirroring panel", () => {
       .first<{ detail: string }>();
     expect(JSON.parse(row?.detail ?? "{}")).toMatchObject({ passCategories: "1" });
     expect(row?.detail).not.toContain("Geheimkunde");
+  });
+
+  describe("tentative copies", () => {
+    /** Rows plus the indexes of the ticked "Tentative" boxes. */
+    function ticked(pairs: [string, string][], indexes: number[]): [string, string][] {
+      return [
+        ...rows(pairs),
+        ...indexes.map((index): [string, string] => ["passTentative", String(index)]),
+      ];
+    }
+
+    it("shows one box per row from Google to Outlook, with the row index as value", async () => {
+      const { user, cookie, w, g } = await setup("mptent");
+      await setDirection(env, user, g, w, "busy");
+      await setRuleDetails(env, user, {
+        passCategories: [
+          {
+            from: g,
+            to: w,
+            pairs: [
+              { from: "color:5", to: "Focus", tentative: false },
+              { from: "color:6", to: "Deep", tentative: true },
+            ],
+          },
+        ],
+      });
+      const row = passRow(await panel(cookie, g, w));
+      const boxes = [...row.matchAll(/<input class="switch" type="checkbox"[^>]*>/g)].map(
+        ([tag]) => tag,
+      );
+      expect(boxes).toHaveLength(3);
+      for (const [index, tag] of boxes.entries()) {
+        expect(tag).toContain('name="passTentative"');
+        expect(tag).toContain(`value="${index}"`);
+        expect(tag).toMatch(/aria-label="Tentative in [^"]+"/);
+      }
+      expect(boxes.map((tag) => / checked(=|[ />])/.test(tag))).toEqual([false, true, false]);
+      // Each box sits in its row, after the name.
+      const second = row.split('class="mx-pass-row"')[2] ?? "";
+      expect(second.indexOf('name="passTo"')).toBeLessThan(second.indexOf('name="passTentative"'));
+      expect(row).toContain(en.next.mirroring.pass.tentative);
+      expect(row).toContain(en.next.mirroring.pass.tentativeHint);
+    });
+
+    it("shows no box in any other direction", async () => {
+      const { user, cookie, w, o, g, h } = await setup("mptentno");
+      for (const [from, to] of [
+        [w, g],
+        [w, o],
+        [g, h],
+      ] as const) {
+        await setDirection(env, user, from, to, "busy");
+        expect(passRow(await panel(cookie, from, to))).not.toContain("passTentative");
+      }
+    });
+
+    it("stores the ticked rows from the panel form and clears an unticked one", async () => {
+      const { user, cookie, w, g } = await setup("mptentsave");
+      await setDirection(env, user, g, w, "busy");
+      const pairs: [string, string][] = [
+        ["color:5", "Focus"],
+        ["color:6", "Deep"],
+        ["", ""],
+      ];
+      expect((await save(cookie, panelForm(g, w, ticked(pairs, [0])))).status).toBe(303);
+      expect(await passOf(g, w)).toEqual([
+        { from: "color:5", to: "Focus", tentative: true },
+        { from: "color:6", to: "Deep", tentative: false },
+      ]);
+      expect((await save(cookie, panelForm(g, w, ticked(pairs, [1])))).status).toBe(303);
+      expect(await passOf(g, w)).toEqual([
+        { from: "color:5", to: "Focus", tentative: false },
+        { from: "color:6", to: "Deep", tentative: true },
+      ]);
+    });
+
+    it("keeps the ticked boxes of a refused form", async () => {
+      const { user, cookie, w, g } = await setup("mptentkeep");
+      await setDirection(env, user, g, w, "busy");
+      const response = await save(
+        cookie,
+        panelForm(
+          g,
+          w,
+          ticked(
+            [
+              ["color:5", "Focus"],
+              ["", "Deep"],
+            ],
+            [0],
+          ),
+        ),
+      );
+      expect(response.status).toBe(400);
+      const boxes = [
+        ...passRow(decode(await response.text())).matchAll(/<input class="switch"[^>]*>/g),
+      ].map(([tag]) => / checked(=|[ />])/.test(tag));
+      // The two refused rows and one empty row.
+      expect(boxes).toEqual([true, false, false]);
+      expect(await passOf(g, w)).toEqual([]);
+    });
+
+    it("refuses a ticked box from Outlook to Google at the field, as the batch path does", async () => {
+      const { user, cookie, w, g } = await setup("mptentpar");
+      await setDirection(env, user, w, g, "busy");
+      expect(
+        (await saveBatch(cookie, `passCategories.${w}.${g}`, [["Focus", "3", true]])).status,
+      ).toBe(400);
+      const response = await save(cookie, panelForm(w, g, ticked([["Focus", "3"]], [0])));
+      expect(response.status).toBe(400);
+      expect(decode(await response.text())).toContain(
+        `<p class="prop-error" id="mx-pass-error">${en.next.mirroring.fieldErrors.passTentative}</p>`,
+      );
+      expect(await passOf(w, g)).toEqual([]);
+    });
+
+    it("writes nothing for a form that shows the stored marks", async () => {
+      const { user, cookie, w, g } = await setup("mptentquiet");
+      await setDirection(env, user, g, w, "busy");
+      await setRuleDetails(env, user, {
+        passCategories: [
+          { from: g, to: w, pairs: [{ from: "color:5", to: "Focus", tentative: true }] },
+        ],
+      });
+      const before = await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?")
+        .bind(user.id)
+        .first();
+      const response = await save(
+        cookie,
+        panelForm(g, w, [
+          ["blockColor", ""],
+          ...ticked(
+            [
+              ["color:5", "Focus"],
+              ["", ""],
+            ],
+            [0],
+          ),
+        ]),
+      );
+      expect(response.status).toBe(303);
+      expect(
+        await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?").bind(user.id).first(),
+      ).toEqual(before);
+    });
   });
 });
 
@@ -445,7 +592,7 @@ describe("directionChanges for the carried categories", () => {
   };
 
   it("counts each field of the rows once, as the save bar does", () => {
-    const pairs = [{ from: "Focus", to: "3" }];
+    const pairs = [{ from: "Focus", to: "3", tentative: false }];
     const base = { ...stored, sourceIsGoogle: false, targetIsGoogle: true, passCategories: pairs };
     expect(
       directionChanges(
@@ -468,12 +615,34 @@ describe("directionChanges for the carried categories", () => {
     });
   });
 
+  it("counts the ticked boxes of the rows as one change", () => {
+    const base = {
+      ...stored,
+      sourceIsGoogle: true,
+      targetIsGoogle: false,
+      passCategories: [
+        { from: "color:5", to: "Focus", tentative: true },
+        { from: "color:6", to: "Deep", tentative: false },
+      ],
+    };
+    const pairs: [string, string][] = [
+      ["color:5", "Focus"],
+      ["color:6", "Deep"],
+      ["", ""],
+    ];
+    const tick = (indexes: number[]) =>
+      form([...rows(pairs), ...indexes.map((i): [string, string] => ["passTentative", String(i)])]);
+    expect(directionChanges(tick([0]), base)).toEqual({ count: 0, fields: [] });
+    expect(directionChanges(tick([1]), base)).toEqual({ count: 1, fields: ["passTentative"] });
+    expect(directionChanges(tick([]), base).fields).toEqual(["passTentative"]);
+  });
+
   it("counts the list of one provider as one change", () => {
     const outlook = {
       ...stored,
       sourceIsGoogle: false,
       targetIsGoogle: false,
-      passCategories: [{ from: "Focus", to: "" }],
+      passCategories: [{ from: "Focus", to: "", tentative: false }],
     };
     const shown: [string, string] = ["passCategoriesShown", "1"];
     expect(directionChanges(form([shown, ["passCategories", "Focus"]]), outlook).count).toBe(0);
@@ -485,8 +654,8 @@ describe("directionChanges for the carried categories", () => {
       sourceIsGoogle: true,
       targetIsGoogle: true,
       passCategories: [
-        { from: "color:5", to: "" },
-        { from: "color:6", to: "" },
+        { from: "color:5", to: "", tentative: false },
+        { from: "color:6", to: "", tentative: false },
       ],
     };
     expect(
