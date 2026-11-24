@@ -170,3 +170,33 @@ needs at least one of them. An event without a category is not copied.
 - If an event leaves the list, the next sync removes its block. If it comes back, the next sync
   writes the block again. Each occurrence of a recurring event counts on its own.
 - A block that ended before the sync window stays, as with the other filters.
+
+## Carry categories to the copies
+
+By default a copy carries no category or colour of its event, at every level. A category name can
+give away what an event is about. You can let chosen categories pass. Open the mirroring on the
+**Mirroring** page, and fill **Carry categories** (for an Outlook source) or **Carry colours** (for
+a Google source) under **Look of the copies**. The list applies to that mirroring only, and nothing
+passes unless it is listed.
+
+- Between two Outlook accounts, list the category names, separated by commas. The copy carries
+  each name as it is written in the list, not as the event wrote it.
+- Between two Google accounts, tick the colours. The copy carries the same colours.
+- From Outlook to Google, each row pairs a category name with the colour that the copy gets.
+- From Google to Outlook, each row pairs a colour with the category name that the copy gets.
+- From Google to Outlook, one colour can have several rows. The copy then carries each name.
+
+The panel shows the saved rows and one empty row. Choose **Add a row** for more rows. Without
+JavaScript, fill the empty row and save; the panel then shows a new empty row. In a row, clear the
+name to remove the row: a row without a name counts as empty. A row with a name needs a colour. A
+name has at most 100 characters and no comma. Upper and lower case do not matter when slotmirror
+matches a name. A mirroring carries at most 50 categories.
+
+- In Outlook, a copy keeps the colour of the copies and adds each carried category. A carried name
+  that is not in the category list of the target mailbox shows without a colour.
+- A Google event has one colour. If an event matches several rows, the first row wins, and it wins
+  over the colour of the copies.
+- A copy of an event that the source marks private also carries its listed categories. The list
+  holds only names that you chose to show.
+- A category that someone adds by hand to a copy stays until slotmirror writes the copy again, for
+  example after the event or the list changes.

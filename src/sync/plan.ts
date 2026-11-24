@@ -67,7 +67,37 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     location: level === "title_location" || level === "full" ? event.location : "",
     body: level === "full" ? event.body : "",
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
+    ...passedCategories(event, options),
   };
+}
+
+/**
+ * The `categories` of a block: the target value of each `passCategories` entry whose `from` matches
+ * a category of the event, in list order and each once, compared without case. A blank `to` takes
+ * `from` as written, and the colour ID for a Google colour "color:<id>". Empty without a match, so
+ * that the content stays as before. Categories pass also for an event the source marks private:
+ * the list holds only names that the user chose to show, unlike the title or the body.
+ */
+function passedCategories(event: SourceEvent, options: RuleOptions): { categories?: string[] } {
+  if (options.passCategories.length === 0 || event.categories.length === 0) return {};
+  const own = new Set(event.categories.map(categoryKey));
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const { from, to } of options.passCategories) {
+    const key = categoryKey(from);
+    if (key === "" || !own.has(key)) continue;
+    const value = to.trim() || blankTarget(from);
+    if (value === "" || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    values.push(value);
+  }
+  return values.length === 0 ? {} : { categories: values };
+}
+
+/** The value of a blank `to`: the colour ID for a Google colour key, else the name as written. */
+function blankTarget(from: string): string {
+  const name = from.trim();
+  return /^color:(?:[1-9]|1[01])$/i.test(name) ? name.slice("color:".length) : name;
 }
 
 /**
@@ -119,6 +149,7 @@ export async function dedupKeyFor(scope: string, content: BlockContent): Promise
   return shortHash(dedupText(scope, content));
 }
 
+// No colour and no passed categories: a change of them alone must not make a second block.
 function dedupText(scope: string, content: BlockContent): string {
   const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
   const allDay = content.allDay ? "all-day" : "timed";

@@ -140,6 +140,18 @@ export const de: Messages = {
       "Google-Termine haben Farben, keine Kategorien. Wähle stattdessen Farben. Es wurde nichts gespeichert.",
     onlyCategoriesDirection:
       "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
+    passCategoriesFrom:
+      "Eine zu übernehmende Kategorie passt nicht zum Quellkalender: Google-Termine haben Farben, Outlook-Namen haben kein Komma und höchstens 100 Zeichen. Es wurde nichts gespeichert.",
+    passCategoriesTo:
+      "Eine Zielkategorie oder Zielfarbe passt nicht zum Zielkalender: Google braucht eine Farbe von 1 bis 11, ein Outlook-Name hat kein Komma und höchstens 100 Zeichen. Es wurde nichts gespeichert.",
+    passCategoriesIncomplete:
+      "Zwischen einem Google- und einem Outlook-Kalender braucht jede Zeile einen Namen und eine Farbe. Es wurde nichts gespeichert.",
+    passCategoriesTooMany: (max) =>
+      `Eine Richtung übernimmt höchstens ${max} Kategorien. Es wurde nichts gespeichert.`,
+    passCategoriesInvalid:
+      "Die Liste der zu übernehmenden Kategorien war nicht lesbar. Es wurde nichts gespeichert.",
+    passCategoriesDirection:
+      "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
     skipCategoriesHint:
       "Termine mit einer dieser Outlook-Kategorien werden nicht kopiert. Gross- und Kleinschreibung zählt nicht.",

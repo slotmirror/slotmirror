@@ -603,6 +603,16 @@ const OPTION_CASES: Record<string, () => Promise<OptionRole>> = {
   blockTitle: () => ignored({ blockTitle: "Away" }),
   markPrivate: () => ignored({ markPrivate: false }),
   blockColor: () => ignored({ blockColor: "5" }),
+  passCategories: async () => {
+    // The event has the category, so the option changes the block; the comparison does not see it.
+    const events = [event("event:1", { categories: ["Focus"] })];
+    const change = { passCategories: [{ from: "Focus", to: "" }] };
+    const before = await planned(rule(), events);
+    const after = await planned(rule("rule-a", change), events);
+    expect(after[0]?.contentHash).not.toBe(before[0]?.contentHash);
+    expect((await compared([rule("rule-a", change)], events, before)).counts).toEqual(NONE);
+    return "content";
+  },
 };
 
 /** With `drop` the rule wants no block for the event, with `keep` it does. */
