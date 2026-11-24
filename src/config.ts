@@ -92,6 +92,12 @@ const ruleOptionsFields = z.object({
         z.object({
           from: z.string().check(z.maxLength(100)),
           to: z._default(z.string().check(z.maxLength(100)), ""),
+          /**
+           * True: the block of a busy event that matches `from` shows as tentative. Free and
+           * tentative events keep their status. The editor allows it from Google to Outlook only:
+           * Google has no tentative status for an event that the user made alone.
+           */
+          tentative: z._default(z.boolean(), false),
         }),
       )
       .check(z.maxLength(50)),

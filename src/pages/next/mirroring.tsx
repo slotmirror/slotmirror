@@ -10,6 +10,7 @@ import {
   type EditorState,
   type Level,
   levelOf,
+  canPassTentative,
   passCategoriesFor,
   type PassPair,
 } from "../../editor";
@@ -266,7 +267,8 @@ export function directionChanges(
 
 /**
  * The changes of the carried categories in a refused form, as `panel.js` counts them: the list of
- * one provider is one change; between providers each of the two fields of the rows is one.
+ * one provider is one change; between providers each of the two fields of the rows is one, and the
+ * "Tentative" switches of the rows are one.
  */
 function passChanges(
   draft: FormData,
@@ -291,7 +293,20 @@ function passChanges(
     return same ? [] : [["passColor"]];
   }
   if (source === target) return differs("from") ? [["passCategories"]] : [];
-  return [differs("from") ? ["passFrom"] : [], differs("to") ? ["passTo"] : []];
+  const changes = [differs("from") ? ["passFrom"] : [], differs("to") ? ["passTo"] : []];
+  if (!canPassTentative(source, target)) return changes;
+  // A switch sends the index of its row, and the panel draws the stored rows in their order, so
+  // the ticked indexes compare with the stored rows that have the mark. An added row is unticked.
+  const ticked = draft
+    .getAll("passTentative")
+    .filter((value) => typeof value === "string")
+    .sort()
+    .join();
+  const saved = stored.passCategories
+    .flatMap((pair, index) => (pair.tentative ? [String(index)] : []))
+    .sort()
+    .join();
+  return [...changes, ticked !== saved ? ["passTentative"] : []];
 }
 
 // List ---------------------------------------------------------------------------------------------
@@ -736,8 +751,9 @@ function RowArrow() {
  * the list holds the source values, as the filter does: names for Outlook, ticked colours for
  * Google. Between providers each row pairs a source value with a target value: a name and a
  * Google colour. The rows send "passFrom" and "passTo" in their order (see `passPairsFromForm`).
- * The server renders the saved rows and one empty row, which works without script; the script
- * adds more rows (`mirroring.js`).
+ * From Google to Outlook each row also has a "Tentative" switch, which sends the index of its row
+ * as "passTentative". The server renders the saved rows and one empty row, which works without
+ * script; the script adds more rows (`mirroring.js`).
  */
 function PassCategories(props: {
   from: EditorAccount;
@@ -797,13 +813,22 @@ function PassCategories(props: {
   // A refused form keeps its rows; an empty row follows the last one with a name.
   const froms = fields.all("passFrom", [...stored.map((pair) => pair.from), ""]);
   const tos = fields.all("passTo", [...stored.map((pair) => pair.to), ""]);
+  const ticked = new Set(
+    fields.all(
+      "passTentative",
+      stored.flatMap((pair, index) => (pair.tentative ? [String(index)] : [])),
+    ),
+  );
   const rows = Array.from({ length: Math.max(froms.length, tos.length) }, (_, index) => ({
     from: froms[index] ?? "",
     to: tos[index] ?? "",
+    tentative: ticked.has(String(index)),
   }));
   const last = rows.at(-1);
   if (!last || (sourceIsGoogle ? last.to : last.from).trim() !== "")
-    rows.push({ from: "", to: "" });
+    rows.push({ from: "", to: "", tentative: false });
+  // Only Outlook shows a tentative copy, and only a Google event lacks the status of its own.
+  const withTentative = canPassTentative(from.provider, to.provider);
   // After a refusal, the rows that do not fit on their own are marked; a list that is only too long
   // marks none, and the reason stands under the rows. A row without a name is blank, as on save.
   const rowInvalid = (row: PassPair) =>
@@ -857,18 +882,38 @@ function PassCategories(props: {
       label={sourceIsGoogle ? text.colors : text.categories}
       group="mx-pass"
       stacked
-      fields={["passFrom", "passTo"]}
+      fields={withTentative ? ["passFrom", "passTo", "passTentative"] : ["passFrom", "passTo"]}
       error={error}
-      hint={sourceIsGoogle ? text.rowsHintColors : text.rowsHint}
+      hint={
+        withTentative ? (
+          <>
+            {text.rowsHintColors} {text.tentativeHint}
+          </>
+        ) : sourceIsGoogle ? (
+          text.rowsHintColors
+        ) : (
+          text.rowsHint
+        )
+      }
     >
       {shown}
+      {/* One caption over the switches instead of a text in each row, so that the two fields of
+          a row keep their width. Each switch has the caption in its own name. */}
+      {withTentative ? (
+        <div class="mx-pass-head" aria-hidden="true">
+          {text.tentative}
+        </div>
+      ) : null}
+      {/* The switches of the rows count as one change in the save bar, as the server counts
+          them (`passChanges`); the other fields count one per name anyway. */}
       <div
-        class="mx-pass-rows"
+        class={withTentative ? "mx-pass-rows has-tentative" : "mx-pass-rows"}
         role="group"
         aria-labelledby={labelId("mx-pass")}
         {...describedBy("mx-pass", { hint: true, invalid })}
+        data-change-group={withTentative ? "passRows" : undefined}
       >
-        {rows.map((row) => {
+        {rows.map((row, index) => {
           const marked = rowInvalid(row);
           return (
             <div class="mx-pass-row">
@@ -879,6 +924,16 @@ function PassCategories(props: {
               {sourceIsGoogle
                 ? name("passTo", row.to, to, marked)
                 : color("passTo", row.to, "", to, marked)}
+              {withTentative ? (
+                // The value is the row index: an unticked box sends nothing, so a ticked one must
+                // name its row (see `passPairsFromForm`).
+                <Switch
+                  name="passTentative"
+                  value={String(index)}
+                  label={text.tentativeIn(to.name)}
+                  checked={row.tentative}
+                />
+              ) : null}
             </div>
           );
         })}

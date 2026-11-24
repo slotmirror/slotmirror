@@ -82,9 +82,11 @@ function detailsRefusal(
         ? text.passIncomplete
         : problem.reason === "tooMany"
           ? text.passTooMany(MAX_PASS_CATEGORIES)
-          : side?.provider === "google"
-            ? text.colorInvalid
-            : text.passName(MAX_CATEGORY_LENGTH);
+          : problem.reason === "tentative"
+            ? text.passTentative
+            : side?.provider === "google"
+              ? text.colorInvalid
+              : text.passName(MAX_CATEGORY_LENGTH);
     return refuse(reason, "passCategories");
   }
   return refuse(ruleDetailsError(t, problem));
@@ -242,14 +244,16 @@ function passCategoriesOf(
   const pairs = passPairsFromForm(form, source.provider, target.provider).map((pair) => {
     if (source.provider !== target.provider) return pair;
     const kept = stored.find((entry) => entry.from.toLowerCase() === pair.from.toLowerCase());
-    return kept ? { from: pair.from, to: kept.to } : pair;
+    return kept ? { ...pair, to: kept.to } : pair;
   });
   const checked = passCategoriesFor(source.provider, target.provider, pairs);
   if ("problem" in checked) return pairs;
   // A Google event has one colour, so the order of the boxes says nothing: the panel draws them in
   // the order of the palette, which need not be the stored one.
   const key = (list: readonly PassPair[]) => {
-    const entries = list.map((pair) => JSON.stringify([pair.from, pair.to]));
+    const entries = list.map((pair) =>
+      JSON.stringify([pair.from, pair.to, pair.tentative === true]),
+    );
     return (
       source.provider === "google" && target.provider === "google" ? entries.sort() : entries
     ).join();

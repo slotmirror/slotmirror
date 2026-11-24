@@ -644,7 +644,7 @@ describe("opt-in categories", () => {
 });
 
 describe("carried categories", () => {
-  type Pair = { from: string; to: string };
+  type Pair = { from: string; to: string; tentative?: boolean };
 
   async function passOf(calendar: string, target = "%"): Promise<Pair[] | undefined> {
     const row = await env.DB.prepare(
@@ -698,8 +698,8 @@ describe("carried categories", () => {
     });
     expect(response.status).toBe(204);
     expect(await passOf(`${g}-cal`, `${o}-cal`)).toEqual([
-      { from: "color:5", to: "Work" },
-      { from: "color:5", to: "Client" },
+      { from: "color:5", to: "Work", tentative: false },
+      { from: "color:5", to: "Client", tentative: false },
     ]);
   });
 
@@ -715,7 +715,9 @@ describe("carried categories", () => {
       ]),
     });
     expect(response.status).toBe(204);
-    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([{ from: "Focus", to: "Deep work" }]);
+    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([
+      { from: "Focus", to: "Deep work", tentative: false },
+    ]);
   });
 
   it("stores trimmed pairs of one direction from the batch, a repeated pair is dropped", async () => {
@@ -732,8 +734,8 @@ describe("carried categories", () => {
     });
     expect(response.status).toBe(204);
     expect(await passOf(`${w}-cal`)).toEqual([
-      { from: "Focus", to: "3" },
-      { from: "Deep", to: "11" },
+      { from: "Focus", to: "3", tentative: false },
+      { from: "Deep", to: "11", tentative: false },
     ]);
     expect(await passOf(`${o}-cal`)).toEqual([]);
   });
@@ -750,7 +752,9 @@ describe("carried categories", () => {
         })
       ).status,
     ).toBe(204);
-    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([{ from: "Focus", to: "" }]);
+    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([
+      { from: "Focus", to: "", tentative: false },
+    ]);
     for (const [from, to, pair] of [
       [w, g, ["Focus", ""]],
       [g, w, ["color:3", ""]],
@@ -807,8 +811,8 @@ describe("carried categories", () => {
     ]);
     expect((await saveWithoutScript(cookie, body)).status).toBe(302);
     expect(await passOf(`${w}-cal`)).toEqual([
-      { from: "Focus", to: "3" },
-      { from: "Reise; privat", to: "6" },
+      { from: "Focus", to: "3", tentative: false },
+      { from: "Reise; privat", to: "6", tentative: false },
     ]);
   });
 
@@ -832,7 +836,7 @@ describe("carried categories", () => {
       ["", ""], // the empty row has no colour and no name
     ]);
     expect((await saveWithoutScript(cookie, body)).status).toBe(302);
-    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus" }]);
+    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus", tentative: false }]);
   });
 
   it("stores a name list between Outlook calendars and colours between Google calendars", async () => {
@@ -866,8 +870,8 @@ describe("carried categories", () => {
     names.append("passCategories", "Focus, Deep,, focus");
     await saveWithoutScript(cookie, names);
     expect(await passOf(`${w}-cal`)).toEqual([
-      { from: "Focus", to: "" },
-      { from: "Deep", to: "" },
+      { from: "Focus", to: "", tentative: false },
+      { from: "Deep", to: "", tentative: false },
     ]);
     const colours = new URLSearchParams({
       from: g,
@@ -878,8 +882,8 @@ describe("carried categories", () => {
     colours.append("passColor", "color:11");
     await saveWithoutScript(cookie, colours);
     expect(await passOf(`${g}-cal`)).toEqual([
-      { from: "color:5", to: "" },
-      { from: "color:11", to: "" },
+      { from: "color:5", to: "", tentative: false },
+      { from: "color:11", to: "", tentative: false },
     ]);
   });
 
@@ -891,7 +895,7 @@ describe("carried categories", () => {
     });
     await saveWithoutScript(cookie, new URLSearchParams({ from: w, to: g, blockColor: "3" }));
     await saveAll(cookie, { [`blockColor.${w}.${g}`]: "5" });
-    expect(await passOf(`${w}-cal`)).toEqual([{ from: "Focus", to: "3" }]);
+    expect(await passOf(`${w}-cal`)).toEqual([{ from: "Focus", to: "3", tentative: false }]);
   });
 
   it("logs the count of pairs, not the names", async () => {
@@ -919,7 +923,9 @@ describe("carried categories", () => {
     await setGroupMembership(env, user, g, true);
     await setDirection(env, user, w, g, "title");
     await saveAll(cookie, { [`passCategories.${w}.${g}`]: wire([["Focus", "3"]]) });
-    expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([{ from: "Focus", to: "3" }]);
+    expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([
+      { from: "Focus", to: "3", tentative: false },
+    ]);
 
     await resetDirection(env, user, w, g);
     const state = await loadEditorState(env, user.id);
@@ -954,7 +960,136 @@ describe("carried categories", () => {
     });
     expect(scripted.status).toBe(400);
     expect((await saveWithoutScript(cookie, rowsForm(g, w, [["", "Deep"]]))).status).toBe(400);
-    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus" }]);
+    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus", tentative: false }]);
+  });
+
+  describe("tentative copies", () => {
+    /** The no-script form with rows and the indexes of the ticked "Tentative" boxes. */
+    function tentativeForm(from: string, to: string, rows: [string, string][], ticked: number[]) {
+      const body = rowsForm(from, to, rows);
+      for (const index of ticked) body.append("passTentative", String(index));
+      return body;
+    }
+
+    it("stores triples from Google to Outlook and still takes pairs", async () => {
+      const { user, cookie, w, g } = await setup("tentbatch");
+      await setDirection(env, user, g, w, "busy");
+      const response = await saveAll(cookie, {
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          ["color:5", "Focus", true],
+          ["color:6", "Deep", false],
+          ["color:7", "Travel"],
+        ]),
+      });
+      expect(response.status).toBe(204);
+      expect(await passOf(`${g}-cal`)).toEqual([
+        { from: "color:5", to: "Focus", tentative: true },
+        { from: "color:6", to: "Deep", tentative: false },
+        { from: "color:7", to: "Travel", tentative: false },
+      ]);
+    });
+
+    it("refuses a tentative row for every other direction, and a third value that is no boolean", async () => {
+      const { user, cookie, w, o, g } = await setup("tentdir");
+      await setDirection(env, user, w, g, "busy");
+      await setDirection(env, user, w, o, "busy");
+      await setDirection(env, user, g, w, "busy");
+      const bad: [string, unknown[][]][] = [
+        [`passCategories.${w}.${g}`, [["Focus", "3", true]]],
+        [`passCategories.${w}.${o}`, [["Focus", "", true]]],
+        [`passCategories.${g}.${w}`, [["color:5", "Focus", "yes"]]],
+        [`passCategories.${g}.${w}`, [["color:5", "Focus", true, true]]],
+      ];
+      for (const [name, value] of bad) {
+        const response = await saveAll(cookie, { [name]: JSON.stringify(value) });
+        expect(response.status, `${name}=${JSON.stringify(value)}`).toBe(400);
+      }
+      expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([]);
+      expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([]);
+      expect(await passOf(`${g}-cal`)).toEqual([]);
+      // A false mark is the plain row, which fits every direction.
+      expect(
+        (await saveAll(cookie, { [`passCategories.${w}.${g}`]: '[["Focus", "3", false]]' })).status,
+      ).toBe(204);
+      expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([
+        { from: "Focus", to: "3", tentative: false },
+      ]);
+    });
+
+    it("keeps the first row of a repeated pair with another mark", async () => {
+      const { user, cookie, w, g } = await setup("tentrepeat");
+      await setDirection(env, user, g, w, "busy");
+      for (const [first, second] of [
+        [true, false],
+        [false, true],
+      ]) {
+        const response = await saveAll(cookie, {
+          [`passCategories.${g}.${w}`]: JSON.stringify([
+            ["color:5", "Focus", first],
+            ["color:5", "focus", second],
+          ]),
+        });
+        expect(response.status).toBe(204);
+        expect(await passOf(`${g}-cal`)).toEqual([
+          { from: "color:5", to: "Focus", tentative: first },
+        ]);
+      }
+    });
+
+    it("maps each ticked box of the form without the script to its row", async () => {
+      const { user, cookie, w, g } = await setup("tentform");
+      await setDirection(env, user, g, w, "busy");
+      const rows: [string, string][] = [
+        ["color:5", "Focus"],
+        ["color:6", "Deep"],
+        ["", ""],
+      ];
+      // The empty row is ticked too: a row without a name is no row, whatever its box says.
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, rows, [1, 2]))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([
+        { from: "color:5", to: "Focus", tentative: false },
+        { from: "color:6", to: "Deep", tentative: true },
+      ]);
+      // A cleared first row does not move the box of the second one.
+      const cleared: [string, string][] = [
+        ["color:5", ""],
+        ["color:6", "Deep"],
+      ];
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, cleared, [1]))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:6", to: "Deep", tentative: true }]);
+      // An unticked box clears the mark.
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, cleared, []))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:6", to: "Deep", tentative: false }]);
+    });
+
+    it("refuses a ticked box from Outlook to Google on both paths", async () => {
+      const { user, cookie, w, g } = await setup("tentparity");
+      await setDirection(env, user, w, g, "busy");
+      const scripted = await saveAll(cookie, {
+        [`passCategories.${w}.${g}`]: JSON.stringify([["Focus", "3", true]]),
+      });
+      expect(scripted.status).toBe(400);
+      const plain = await saveWithoutScript(cookie, tentativeForm(w, g, [["Focus", "3"]], [0]));
+      expect(plain.status).toBe(400);
+      expect(await passOf(`${w}-cal`)).toEqual([]);
+    });
+
+    it("logs the count when only a mark changes, not the names", async () => {
+      const { user, cookie, w, g } = await setup("tentaudit");
+      await setDirection(env, user, g, w, "busy");
+      await saveAll(cookie, { [`passCategories.${g}.${w}`]: '[["color:5", "Geheimkunde"]]' });
+      await saveAll(cookie, {
+        [`passCategories.${g}.${w}`]: '[["color:5", "Geheimkunde", true]]',
+      });
+      const { results } = await env.DB.prepare(
+        "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'rule_updated' ORDER BY id DESC",
+      )
+        .bind(user.id)
+        .all<{ detail: string }>();
+      expect(results).toHaveLength(2);
+      expect(JSON.parse(results[0]?.detail ?? "{}")).toMatchObject({ passCategories: "1" });
+      expect(results[0]?.detail).not.toContain("Geheimkunde");
+    });
   });
 });
 

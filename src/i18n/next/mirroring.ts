@@ -174,6 +174,16 @@ export const mirroringEn = {
     /** The empty choice of a row's colour. */
     chooseColor: "Choose a colour",
     addRow: "Add a row",
+    /**
+     * Google to Outlook: the switch of a row that shows the copy of a busy event as tentative.
+     * Google has no tentative status for an event that the user made alone. "Tentative" is the
+     * name of the status in Outlook.
+     */
+    tentative: "Tentative",
+    /** The accessible name of the switch; it starts with the visible text. */
+    tentativeIn: (calendar: string) => `Tentative in ${calendar}`,
+    tentativeHint:
+      "With Tentative on, the copy of a busy event shows as tentative in Outlook, so that others see that the time can move.",
   },
   /**
    * A save of a form drawn before another tab or device changed the mirroring, or one whose rules
@@ -194,6 +204,8 @@ export const mirroringEn = {
       `A category name cannot contain a comma and can have at most ${max} characters.`,
     passIncomplete: "Every row needs a category name and a colour.",
     passTooMany: (max: number) => `You can carry at most ${max} categories.`,
+    /** A tentative row in a direction other than Google to Outlook; the panel shows no switch. */
+    passTentative: "Only a copy from Google in Outlook can show as tentative. Reload the page.",
     /** A copied level of a mirroring with mixed marks, without an answer to "What others see". */
     whoRequired: (from: string) =>
       `Choose what others see. Your answer applies to each calendar of ${from}.`,
@@ -457,6 +469,10 @@ export const mirroringDe: MirroringMessages = {
     color: (calendar) => `Farbe in ${calendar}`,
     chooseColor: "Farbe wählen",
     addRow: "Zeile hinzufügen",
+    tentative: "Mit Vorbehalt",
+    tentativeIn: (calendar) => `Mit Vorbehalt in ${calendar}`,
+    tentativeHint:
+      "Ist „Mit Vorbehalt“ an, zeigt Outlook die Kopie eines belegten Termins als „Mit Vorbehalt“. So sehen andere, dass sich die Zeit verschieben lässt.",
   },
   conflict:
     "Nicht gespeichert. Diese Spiegelung wurde in einem anderen Tab oder auf einem anderen Gerät geändert, nachdem du sie geöffnet hast. Das Panel zeigt jetzt die aktuellen Einstellungen. Ändere sie noch einmal, wenn du deine Änderung weiter willst.",
@@ -470,6 +486,8 @@ export const mirroringDe: MirroringMessages = {
       `Ein Kategoriename darf kein Komma enthalten und höchstens ${max} Zeichen haben.`,
     passIncomplete: "Jede Zeile braucht einen Kategorienamen und eine Farbe.",
     passTooMany: (max) => `Du kannst höchstens ${max} Kategorien übernehmen.`,
+    passTentative:
+      "Nur eine Kopie von Google in Outlook kann „Mit Vorbehalt“ zeigen. Lade die Seite neu.",
     whoRequired: (from) =>
       `Wähle, was andere sehen. Deine Antwort gilt für jeden Kalender aus ${from}.`,
   },

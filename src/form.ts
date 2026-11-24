@@ -63,9 +63,11 @@ export function categoryNames(list: string): string[] {
  * "passTo" field, in the order of the rows, so the n-th of each name is one row. A select always
  * sends a value and a text field always sends its text, so the two lists line up. The row's text
  * field decides: if it is empty, the row is blank, whatever the colour says. That clears a saved
- * row and ignores the empty row at the end. Values are only split here: `passCategoriesFor`
- * refuses names and lists over the limits, as it does for the batch path, instead of dropping
- * them.
+ * row and ignores the empty row at the end. A ticked "Tentative" box sends "passTentative" with
+ * the index of its row, counted from 0 over all rows: an unticked box sends nothing, so the order
+ * of the boxes cannot tell their rows. Values are only split here: `passCategoriesFor` refuses
+ * names, lists over the limits and a tentative row in a direction that cannot show it, as it does
+ * for the batch path, instead of dropping them.
  */
 export function passPairsFromForm(form: FormData, source: Provider, target: Provider): PassPair[] {
   if (source === target) {
@@ -76,27 +78,29 @@ export function passPairsFromForm(form: FormData, source: Provider, target: Prov
             .split(",")
             .map((name) => name.trim())
             .filter((name) => name !== "");
-    return list.map((from) => ({ from, to: "" }));
+    return list.map((from) => ({ from, to: "", tentative: false }));
   }
   const texts = (name: string) =>
     form.getAll(name).map((value) => (typeof value === "string" ? value.trim() : ""));
   const froms = texts("passFrom");
   const tos = texts("passTo");
+  const ticked = new Set(texts("passTentative"));
   const pairs: PassPair[] = [];
   for (let index = 0; index < Math.max(froms.length, tos.length); index++) {
     const from = froms[index] ?? "";
     const to = tos[index] ?? "";
     // The text side is the name of the Outlook category: the source for Outlook to Google.
     if ((source === "google" ? to : from) === "") continue;
-    pairs.push({ from, to });
+    pairs.push({ from, to, tentative: ticked.has(String(index)) });
   }
   return pairs;
 }
 
 /**
- * The carried categories of the batch path: one JSON list of [from, to] pairs per direction.
- * JSON, because an Outlook category name can hold any character except a comma, so no separator
- * is safe, and a pair must stay together. Null if the text is not a list of string pairs.
+ * The carried categories of the batch path: one JSON list per direction of [from, to] pairs or
+ * [from, to, tentative] triples, where `tentative` is a boolean. JSON, because an Outlook category
+ * name can hold any character except a comma, so no separator is safe, and a pair must stay
+ * together. Null if the text is not a list of such entries.
  */
 export function passPairsFromJson(text: string): PassPair[] | null {
   let value: unknown;
@@ -108,10 +112,12 @@ export function passPairsFromJson(text: string): PassPair[] | null {
   if (!Array.isArray(value)) return null;
   const pairs: PassPair[] = [];
   for (const entry of value as unknown[]) {
-    if (!Array.isArray(entry) || entry.length !== 2) return null;
-    const [from, to] = entry as unknown[];
-    if (typeof from !== "string" || typeof to !== "string") return null;
-    pairs.push({ from, to });
+    if (!Array.isArray(entry) || (entry.length !== 2 && entry.length !== 3)) return null;
+    const [from, to, tentative = false] = entry as unknown[];
+    if (typeof from !== "string" || typeof to !== "string" || typeof tentative !== "boolean") {
+      return null;
+    }
+    pairs.push({ from, to, tentative });
   }
   return pairs;
 }
@@ -135,6 +141,7 @@ export function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): stri
         to: t.editor.passCategoriesTo,
         incomplete: t.editor.passCategoriesIncomplete,
         tooMany: t.editor.passCategoriesTooMany(MAX_PASS_CATEGORIES),
+        tentative: t.editor.passCategoriesTentative,
       }[problem.reason];
     case "direction":
       if (problem.field === "onlyCategories") return t.editor.onlyCategoriesDirection;

@@ -150,6 +150,8 @@ export const de: Messages = {
       `Eine Richtung übernimmt höchstens ${max} Kategorien. Es wurde nichts gespeichert.`,
     passCategoriesInvalid:
       "Die Liste der zu übernehmenden Kategorien war nicht lesbar. Es wurde nichts gespeichert.",
+    passCategoriesTentative:
+      "Nur eine Spiegelung von Google nach Outlook kann ihre Kopien als „Mit Vorbehalt“ zeigen. Es wurde nichts gespeichert.",
     passCategoriesDirection:
       "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
