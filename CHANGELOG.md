@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.4.0...slotmirror-v0.5.0) (2026-11-25)
+
+
+### Features
+
+* **rules:** carry a category and tentative for all events of a source calendar ([#137](https://github.com/slotmirror/slotmirror/issues/137)) ([9bc2ca4](https://github.com/slotmirror/slotmirror/commit/9bc2ca47c5f5eff807c88b96515f6a5abb8f2a81))
+
 ## [0.4.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.3.0...slotmirror-v0.4.0) (2026-11-24)
 
 
