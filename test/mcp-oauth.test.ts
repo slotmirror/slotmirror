@@ -382,7 +382,8 @@ describe("client registration", () => {
             return results;
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     const response = await fetchWith({ DB: counting }, "/oauth/register", {

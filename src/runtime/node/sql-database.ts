@@ -113,7 +113,11 @@ export class NodeSqlDatabase implements SqlDatabase {
   /** Runs a query and returns its rows as objects (`rows`) or as arrays (`raw`). */
   execute<T>(query: string, values: SQLInputValue[], shape: "rows" | "raw"): SqlResult<T> {
     try {
-      if (query.trim() === "") throw new Error("D1_ERROR: No SQL statements detected.");
+      // As in D1: the new text only if nothing is left after whole-line "--" comments; any other
+      // text without a statement (";", a block comment) gets the old one (live D1, 2026-11-25).
+      if (query.replace(/^\s*--.*/gm, "").trim() === "") {
+        throw new Error("D1_ERROR: No SQL statements detected.");
+      }
       if (isEmptySql(query)) throw new Error("D1_ERROR: SQL code did not contain a statement.");
       const before = this.#count().total;
       const rows = this.#runQuery(query, values, shape);

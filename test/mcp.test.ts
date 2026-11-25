@@ -266,7 +266,8 @@ describe("access to /mcp", () => {
             return target.prepare(sql);
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     const response = await postWith(
@@ -311,7 +312,8 @@ describe("access to /mcp", () => {
             throw new Error("D1_ERROR: daily limit");
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     const chunk = new TextEncoder().encode(" ".repeat(16 * 1024));
@@ -344,7 +346,8 @@ describe("access to /mcp", () => {
             throw new Error("D1_ERROR: daily limit");
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     const response = await postWith(
@@ -1040,7 +1043,10 @@ describe("tools", () => {
     let rowsRead = 0;
     const counting = new Proxy(env.DB, {
       get(target, key) {
-        if (key !== "prepare") return Reflect.get(target, key);
+        if (key !== "prepare") {
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
         return (sql: string) => {
           const statement = target.prepare(sql);
           return new Proxy(statement, {
@@ -1077,7 +1083,10 @@ describe("cost of a status call", () => {
     let rowsRead = 0;
     const counting = new Proxy(env.DB, {
       get(target, key) {
-        if (key !== "prepare") return Reflect.get(target, key);
+        if (key !== "prepare") {
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
         return (sql: string) => ({
           bind: (...values: unknown[]) => ({
             all: async () => {
@@ -1263,7 +1272,8 @@ describe("daily limit", () => {
             return target.prepare(sql);
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     await postWith(
@@ -1329,7 +1339,8 @@ describe("daily limit", () => {
             return results;
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     await postWith(
@@ -1432,7 +1443,8 @@ describe("daily limit", () => {
             });
           };
         }
-        return Reflect.get(target, key);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
       },
     });
     expect((await reserveToolCall(counting, user.id)).outcome).toBe("ok");

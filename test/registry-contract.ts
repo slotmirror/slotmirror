@@ -343,8 +343,14 @@ export function registryContract(database: () => D1Database): void {
 
       await expect(db.prepare("").run()).rejects.toThrow("D1_ERROR: No SQL statements detected.");
       await expect(db.prepare("-- nothing").run()).rejects.toThrow(
-        "D1_ERROR: SQL code did not contain a statement.",
+        "D1_ERROR: No SQL statements detected.",
       );
+      // Live D1 gives the old text once something other than whole-line "--" comments is left.
+      for (const query of [";", "/* x */", "/* a */ -- b"]) {
+        await expect(db.prepare(query).run()).rejects.toThrow(
+          "D1_ERROR: SQL code did not contain a statement.",
+        );
+      }
     });
 
     it("binds an array of bytes as binary data and refuses other arrays", async () => {
