@@ -12,7 +12,7 @@ export const ASSETS: Readonly<Record<string, string>> = {
   "/next/calendars.js": "ef9df19338",
   "/next/enhance.js": "a3be5ccc54",
   "/next/mirroring.css": "ffa86dad7a",
-  "/next/mirroring.js": "c989599bc5",
+  "/next/mirroring.js": "91c8e227ea",
   "/next/overview.css": "d8f44d2e5e",
   "/next/palette.js": "70f08d5918",
   "/next/panel.js": "2bdfd37326",
@@ -24,4 +24,4 @@ export const ASSETS: Readonly<Record<string, string>> = {
 };
 
 /** Hash of all entries of `ASSETS`. It changes when any file changes. */
-export const ASSET_VERSION = "aac04cc86f";
+export const ASSET_VERSION = "37bdcfa09a";

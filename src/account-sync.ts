@@ -19,7 +19,7 @@ import {
   lastRunBlocks,
   noteTombstoneProgress,
 } from "./cleanup";
-import type { Provider } from "./config";
+import { canPassCalendar, type Provider } from "./config";
 import {
   calendarClient,
   oneCallAtATime,
@@ -1849,12 +1849,17 @@ export class AccountSync extends DurableObject<Env> {
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
     const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
+    // Rows for a whole source calendar exist only from Google to Outlook. In any other direction
+    // `calendar:<ID>` is a category name and matches only events that carry it.
+    const passCalendar = canPassCalendar(rule.source.provider, rule.target.provider)
+      ? rule.source.calendarId
+      : "";
     const desired = await desiredBlocks(
       rule.id,
       sourceEvents,
       ruleOptions,
       { scope: rule.userId, claimed },
-      rule.source.calendarId,
+      passCalendar,
     );
     // A run reads the edge only for a block at the edge without a wanted event; see `planSync`.
     // That is not rare. With a source at UTC or east of it, the main read no longer returns

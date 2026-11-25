@@ -54,7 +54,8 @@ function included(
  * Events the source marks private never carry more than "busy", whatever the rule says.
  * The buffers widen timed blocks only; the times of all-day blocks are dates.
  * `sourceCalendarId` is the slotmirror ID of the rule's source calendar. A `passCategories` row
- * for that calendar matches every event; empty, no such row matches.
+ * for that calendar matches every event; empty, no such row matches. The sync passes it only from
+ * Google to Outlook (`canPassCalendar`): elsewhere the row is a category name.
  */
 export function blockContent(
   event: SourceEvent,

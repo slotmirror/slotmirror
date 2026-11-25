@@ -2,6 +2,7 @@ import type { Query } from "./batch";
 import { auditStatement, recordAudit, type AuditEvent } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
 import {
+  canPassCalendar,
   PASS_CALENDAR_PREFIX,
   parseRuleOptions,
   ruleOptionsSchema,
@@ -1151,19 +1152,48 @@ export function canPassTentative(source: Provider, target: Provider): boolean {
   return source === "google" && target === "microsoft";
 }
 
-/**
- * True if a direction takes rows for a whole source calendar (`calendar:<ID>`). Only from Google
- * to Outlook: there each row picks its source from a list, which can hold the calendars too.
- * Outlook names are typed, so a name can start with the prefix, and between two Google calendars
- * the panel shows colour boxes only.
- */
-export function canPassCalendar(source: Provider, target: Provider): boolean {
-  return source === "google" && target === "microsoft";
-}
+export { canPassCalendar };
 
-/** The slotmirror IDs of the source calendars of a direction, for `passCategoriesFor`. */
+/** The slotmirror IDs of the source calendars of a direction, which the panel offers in a row. */
 export function passSourceCalendars(direction: Pick<EditorDirection, "slots">): string[] {
   return direction.slots.map((slot) => slot.sourceCalendarId);
+}
+
+/**
+ * The calendars that a carried row of a direction may name, for `passCategoriesFor`: its source
+ * calendars, and each calendar that a row stored on one of its rules names. A stored row whose
+ * calendar is no longer a source stays valid, because the panel sends every row with each save
+ * and the person did not touch it. It has no effect: no rule of the direction reads that calendar.
+ * A new row still needs a source calendar. Stored rows passed this check when they were saved, so
+ * the list never admits a calendar of another user or of the target.
+ */
+export function passCalendarsFor(
+  direction: Pick<EditorDirection, "slots" | "parked" | "options">,
+): string[] {
+  const stored = [
+    direction.options,
+    ...direction.slots.map((slot) => slot.rule?.options ?? null),
+    ...direction.parked.map((rule) => rule.options),
+  ].flatMap((options) =>
+    (options?.passCategories ?? []).flatMap((pair) => passCalendarOf(pair.from) ?? []),
+  );
+  return [...new Set([...passSourceCalendars(direction), ...stored])];
+}
+
+/**
+ * The state as it is once `calendarIds` are no longer sources, for the check of a save that also
+ * turns them off: a new carried row must not name them. The directions keep their stored rows
+ * (see `passCalendarsFor`) through `options` and their other rules.
+ */
+export function withoutSources(state: EditorState, calendarIds: ReadonlySet<string>): EditorState {
+  if (calendarIds.size === 0) return state;
+  return {
+    ...state,
+    directions: state.directions.map((direction) => ({
+      ...direction,
+      slots: direction.slots.filter((slot) => !calendarIds.has(slot.sourceCalendarId)),
+    })),
+  };
 }
 
 /** The calendar ID of a carried row's source `calendar:<ID>`, or null for a category or colour. */
@@ -1185,16 +1215,15 @@ export function passCalendarOf(from: string): string | null {
  * refused, not dropped: the person asked for something that the target would not show.
  *
  * From Google to Outlook, `from` can also name a whole source calendar as `calendar:<ID>`, for
- * events without a colour, such as those that Todoist writes. The ID must be one of
- * `sourceCalendars`, the slotmirror IDs of the direction's source calendars; any other is refused,
- * so that a row never names a calendar of another account or user. Without the list no calendar
- * row passes.
+ * events without a colour, such as those that Todoist writes. The ID must be one of `calendars`,
+ * the slotmirror IDs from `passCalendarsFor`; any other is refused, so that a row never names a
+ * calendar of another account or user. Without the list no calendar row passes.
  */
 export function passCategoriesFor(
   source: Provider,
   target: Provider,
   pairs: readonly PassPair[],
-  sourceCalendars: readonly string[] = [],
+  calendars: readonly string[] = [],
 ): { pairs: StoredPassPair[] } | { problem: PassProblem } {
   const seen = new Set<string>();
   const result: StoredPassPair[] = [];
@@ -1211,7 +1240,7 @@ export function passCategoriesFor(
     const calendar = source === "google" ? passCalendarOf(from) : null;
     if (calendar !== null) {
       if (!canPassCalendar(source, target)) return { problem: "from" };
-      if (!sourceCalendars.includes(calendar)) return { problem: "calendar" };
+      if (!calendars.includes(calendar)) return { problem: "calendar" };
     }
     const fits =
       calendar !== null ||
@@ -1398,7 +1427,7 @@ export function ruleDetailsProblem(
       source.provider,
       target.provider,
       pairs,
-      passSourceCalendars(direction),
+      passCalendarsFor(direction),
     );
     if ("problem" in checked) return { kind: "passCategories", reason: checked.problem };
   }
@@ -1411,8 +1440,11 @@ export function ruleDetailsProblem(
  * rules. A direction without rules, for example one that lost its last source in the same save,
  * has nothing to change and is skipped. So is the copy of working hours from an account that has
  * none any more; its rules keep theirs. Source options are stored on the account even if it has
- * no rules. Returns false for details that `ruleDetailsProblem` refuses against the current state.
- * Throws `EditorConflict` if a rule changed since the read; then nothing is stored.
+ * no rules. So is a list of carried categories that names a calendar the direction lost since the
+ * caller's check, for example a direction turned off in the same save, which has no stored rows
+ * left; the other details are stored. Returns false for other details that `ruleDetailsProblem`
+ * refuses against the current state. Throws `EditorConflict` if a rule changed since the read;
+ * then nothing is stored.
  */
 export async function setRuleDetails(
   env: Env,
@@ -1428,7 +1460,11 @@ export async function setRuleDetails(
 ): Promise<boolean> {
   const state = checked ?? (await loadEditorState(env, user.id));
   const problem = ruleDetailsProblem(state, details);
-  if (problem && problem.kind !== "direction" && problem.kind !== "noWorkHours") return false;
+  const drifted =
+    problem?.kind === "direction" ||
+    problem?.kind === "noWorkHours" ||
+    (problem?.kind === "passCategories" && problem.reason === "calendar");
+  if (problem && !drifted) return false;
   const patches: RulePatch[] = [];
   const accounts: D1PreparedStatement[] = [];
   const forDirection = (direction: EditorDirection, patch: Partial<RuleOptions>) => {
@@ -1478,7 +1514,7 @@ export async function setRuleDetails(
     const target = state.accounts.find((account) => account.id === to);
     const direction = state.directions.find((d) => d.from === from && d.to === to);
     if (!source || !target || !direction) continue;
-    const calendars = passSourceCalendars(direction);
+    const calendars = passCalendarsFor(direction);
     const checked = passCategoriesFor(source.provider, target.provider, pairs, calendars);
     if ("pairs" in checked) forDirection(direction, { passCategories: checked.pairs });
   }
@@ -1672,7 +1708,7 @@ function directionPatch(
       source.provider,
       target.provider,
       details.passCategories,
-      passSourceCalendars(direction),
+      passCalendarsFor(direction),
     );
     if ("pairs" in checked) patch.passCategories = checked.pairs;
   }

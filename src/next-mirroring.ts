@@ -5,8 +5,8 @@ import {
   MAX_PASS_CATEGORIES,
   levelOf,
   loadEditorState,
+  passCalendarsFor,
   passCategoriesFor,
-  passSourceCalendars,
   requestSyncs,
   ruleDetailsProblem,
   setDefaultBlockTitle,
@@ -252,7 +252,7 @@ function passCategoriesOf(
     const kept = stored.find((entry) => entry.from.toLowerCase() === pair.from.toLowerCase());
     return kept ? { ...pair, to: kept.to } : pair;
   });
-  const calendars = passSourceCalendars(direction);
+  const calendars = passCalendarsFor(direction);
   const checked = passCategoriesFor(source.provider, target.provider, pairs, calendars);
   if ("problem" in checked) return pairs;
   // A Google event has one colour, so the order of the boxes says nothing: the panel draws them in

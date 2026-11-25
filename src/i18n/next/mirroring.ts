@@ -178,6 +178,11 @@ export const mirroringEn = {
      * calendar, also events without a colour, such as those that Todoist writes.
      */
     allEvents: (calendar: string) => `All events from ${calendar}`,
+    /**
+     * The same choice for a stored row whose calendar still exists but is no longer a source of the
+     * mirroring. Only the row that holds it offers it; the row has no effect.
+     */
+    allEventsNotSource: (calendar: string) => `All events from ${calendar} (not a source)`,
     /** The same choice for a stored row whose calendar slotmirror no longer knows. */
     allEventsRemoved: "All events from a removed calendar",
     addRow: "Add a row",
@@ -213,9 +218,12 @@ export const mirroringEn = {
     passTooMany: (max: number) => `You can carry at most ${max} categories.`,
     /** A tentative row in a direction other than Google to Outlook; the panel shows no switch. */
     passTentative: "Only a copy from Google in Outlook can show as tentative. Reload the page.",
-    /** A row for all events of a calendar that is no longer a source of the mirroring. */
+    /**
+     * A new row for all events of a calendar that is not a source of the mirroring, for example
+     * from a page that was open while the calendar stopped being a source. A stored row passes.
+     */
     passCalendar:
-      "A row names a calendar that is no longer a source of this mirroring. Clear the category in its row.",
+      "A row names a calendar that is not a source of this mirroring. Reload the page and choose again.",
     /** A copied level of a mirroring with mixed marks, without an answer to "What others see". */
     whoRequired: (from: string) =>
       `Choose what others see. Your answer applies to each calendar of ${from}.`,
@@ -479,6 +487,7 @@ export const mirroringDe: MirroringMessages = {
     color: (calendar) => `Farbe in ${calendar}`,
     chooseColor: "Farbe wählen",
     allEvents: (calendar) => `Alle Termine aus ${calendar}`,
+    allEventsNotSource: (calendar) => `Alle Termine aus ${calendar} (keine Quelle)`,
     allEventsRemoved: "Alle Termine aus einem entfernten Kalender",
     addRow: "Zeile hinzufügen",
     tentative: "Mit Vorbehalt",
@@ -501,7 +510,7 @@ export const mirroringDe: MirroringMessages = {
     passTentative:
       "Nur eine Kopie von Google in Outlook kann „Mit Vorbehalt“ zeigen. Lade die Seite neu.",
     passCalendar:
-      "Eine Zeile nennt einen Kalender, der keine Quelle dieser Spiegelung mehr ist. Lösche die Kategorie in ihrer Zeile.",
+      "Eine Zeile nennt einen Kalender, der keine Quelle dieser Spiegelung ist. Lade die Seite neu und wähle noch einmal.",
     whoRequired: (from) =>
       `Wähle, was andere sehen. Deine Antwort gilt für jeden Kalender aus ${from}.`,
   },

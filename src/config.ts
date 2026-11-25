@@ -18,6 +18,16 @@ export function passCalendarKey(calendarId: string): string {
   return `${PASS_CALENDAR_PREFIX}${calendarId}`;
 }
 
+/**
+ * True if a direction takes rows for a whole source calendar (`calendar:<ID>`). Only from Google
+ * to Outlook: there each row picks its source from a list, which can hold the calendars too.
+ * Outlook names are typed, so a name can start with the prefix, and between two Google calendars
+ * the panel shows colour boxes only. In every other direction such a `from` is a category name.
+ */
+export function canPassCalendar(source: string, target: string): boolean {
+  return source === "google" && target === "microsoft";
+}
+
 const bufferMinutes = z._default(z.int().check(z.minimum(0), z.maximum(MAX_BUFFER_MINUTES)), 0);
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */

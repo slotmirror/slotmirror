@@ -4,7 +4,13 @@
  */
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { passCategoriesFor, setDirection, setDirections, setRuleDetails } from "../src/editor";
+import {
+  passCategoriesFor,
+  setDirection,
+  setDirections,
+  setRuleDetails,
+  setSourceCalendar,
+} from "../src/editor";
 import { en } from "../src/i18n/en";
 import { directionChanges } from "../src/pages/next/mirroring";
 import { BASE, signIn } from "./helpers";
@@ -806,29 +812,148 @@ describe("carried categories for all events of a source calendar", () => {
     expect(await passByCalendar(w)).toEqual({ [`${g}-cal`]: [], [`${g}-todoist`]: [] });
   });
 
-  it("keeps a row whose calendar is no longer a source, so that it can be cleared", async () => {
-    const { user, cookie, w, g, todoist } = await withTodoist("mpcalstale");
-    await setRuleDetails(env, user, {
-      passCategories: [
-        {
-          from: g,
-          to: w,
-          pairs: [{ from: `calendar:${todoist}`, to: "Work Blocker", tentative: true }],
-        },
-      ],
+  /** A stored row for all events from Todoist, which then stops being a source. */
+  async function withStaleTodoist(prefix: string) {
+    const ids = await withTodoist(prefix);
+    const stale = { from: `calendar:${ids.todoist}`, to: "Work Blocker", tentative: true };
+    await setRuleDetails(env, ids.user, {
+      passCategories: [{ from: ids.g, to: ids.w, pairs: [stale] }],
     });
-    await env.DB.prepare("UPDATE calendars SET is_source = 0 WHERE id = ?").bind(todoist).run();
-    const row = passRow(await panel(cookie, g, w));
-    expect(row).toContain(
-      `<option value="calendar:${todoist}" selected="">All events from Todoist</option>`,
+    await setSourceCalendar(env, ids.user, ids.todoist, false);
+    expect(await passByCalendar(ids.w)).toEqual({ [ids.main]: [stale] });
+    return { ...ids, stale };
+  }
+
+  /** The `passFrom` list of each row of the panel. */
+  function rowSelects(row: string): string[] {
+    return row
+      .split('class="mx-pass-row"')
+      .slice(1)
+      .map((part) =>
+        part.slice(part.indexOf('<select name="passFrom"'), part.indexOf("</select>")),
+      );
+  }
+
+  it("offers a calendar that is no longer a source only in the row that holds it", async () => {
+    const { cookie, w, g, todoist, main } = await withStaleTodoist("mpcalstale");
+    const [held, empty, ...more] = rowSelects(passRow(await panel(cookie, g, w)));
+    expect(more).toEqual([]);
+    expect(held).toContain(
+      `<option value="calendar:${todoist}" selected="" data-pass-stale="">All events from Todoist (not a source)</option>`,
     );
-    // The row is no longer valid: saving it as shown is refused at the field; clearing it saves.
-    const shown = [[`calendar:${todoist}`, "Work Blocker"]] as [string, string][];
-    const refused = await save(cookie, panelForm(g, w, ticked(shown, [0])));
-    expect(refused.status).toBe(400);
-    expect(decode(await refused.text())).toContain(en.next.mirroring.fieldErrors.passCalendar);
-    const cleared = [[`calendar:${todoist}`, ""]] as [string, string][];
+    expect(held).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    // The empty row, which the script copies for a new row, offers the source calendars only.
+    expect(empty).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    expect(empty).not.toContain(todoist);
+  });
+
+  it("names a removed calendar in the row that holds it", async () => {
+    const { cookie, w, g, todoist } = await withStaleTodoist("mpcalgone");
+    await env.DB.prepare("DELETE FROM calendars WHERE id = ?").bind(todoist).run();
+    const [held, empty] = rowSelects(passRow(await panel(cookie, g, w)));
+    expect(held).toContain(
+      `<option value="calendar:${todoist}" selected="" data-pass-stale="">All events from a removed calendar</option>`,
+    );
+    expect(empty).not.toContain(todoist);
+  });
+
+  it("saves the panel with a stored row whose calendar is no longer a source", async () => {
+    const { cookie, w, g, todoist, main, stale } = await withStaleTodoist("mpcalkeep");
+    // The panel sends the stale row unchanged next to a new colour row.
+    const shown: [string, string][] = [
+      [`calendar:${todoist}`, "Work Blocker"],
+      ["color:8", "Focus"],
+      ["", ""],
+    ];
+    expect((await save(cookie, panelForm(g, w, ticked(shown, [0])))).status).toBe(303);
+    const focus = { from: "color:8", to: "Focus", tentative: false };
+    expect(await passByCalendar(w)).toEqual({ [main]: [stale, focus] });
+
+    // With a new level, the rows go into the write of the level (`setDirections`).
+    const wider: [string, string][] = [...shown.slice(0, 2), ["color:3", "Other"]];
+    const form = panelForm(g, w, ticked(wider, [0]));
+    form.set("copy", "title");
+    expect((await save(cookie, form)).status).toBe(303);
+    const other = { from: "color:3", to: "Other", tentative: false };
+    expect(await passByCalendar(w)).toEqual({ [main]: [stale, focus, other] });
+
+    // Clearing the row removes it.
+    const cleared: [string, string][] = [[`calendar:${todoist}`, ""], ...wider.slice(1)];
     expect((await save(cookie, panelForm(g, w, rows(cleared)))).status).toBe(303);
-    expect((await passByCalendar(w))[`${g}-cal`]).toEqual([]);
+    expect(await passByCalendar(w)).toEqual({ [main]: [focus, other] });
+  });
+
+  it("saves a batch with a stored row whose calendar is no longer a source", async () => {
+    const { cookie, w, g, todoist, main, stale } = await withStaleTodoist("mpcalbatch");
+    const batch = await saveBatch(cookie, `passCategories.${g}.${w}`, [
+      [`calendar:${todoist}`, "Work Blocker", true],
+      ["color:8", "Focus"],
+    ]);
+    expect(batch.status).toBe(204);
+    const focus = { from: "color:8", to: "Focus", tentative: false };
+    expect(await passByCalendar(w)).toEqual({ [main]: [stale, focus] });
+  });
+
+  it("stores the rows of a batch that also stops their calendar being a source", async () => {
+    const { cookie, w, g, user, todoist, main } = await withTodoist("mpcalsame");
+    const stored = { from: `calendar:${todoist}`, to: "Work Blocker", tentative: true };
+    await setRuleDetails(env, user, { passCategories: [{ from: g, to: w, pairs: [stored] }] });
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`calendar.${todoist}`]: "0",
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          [`calendar:${todoist}`, "Work Blocker", true],
+          ["color:8", "Focus"],
+        ]),
+      }),
+    });
+    expect(response.status).toBe(204);
+    const focus = { from: "color:8", to: "Focus", tentative: false };
+    expect(await passByCalendar(w)).toEqual({ [main]: [stored, focus] });
+  });
+
+  it("refuses a new row for a calendar that the same batch stops being a source", async () => {
+    const { cookie, w, g, todoist, main } = await withTodoist("mpcalsamenew");
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`calendar.${todoist}`]: "0",
+        [`passCategories.${g}.${w}`]: JSON.stringify([[`calendar:${todoist}`, "Work Blocker"]]),
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
+    // Nothing was written: Todoist is still a source.
+    expect(await passByCalendar(w)).toEqual({ [main]: [], [todoist]: [] });
+  });
+
+  it("keeps the other details of a batch that turns off a direction with a stale row", async () => {
+    const { cookie, user, w, o, g, todoist } = await withStaleTodoist("mpcaloff");
+    await setDirection(env, user, g, o, "busy");
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`choice.${g}.${w}`]: "off",
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          [`calendar:${todoist}`, "Work Blocker", true],
+        ]),
+        [`blockColor.${g}.${o}`]: "Focus",
+      }),
+    });
+    expect(response.status).toBe(204);
+    const colour = await env.DB.prepare(
+      `SELECT json_extract(r.options, '$.blockColor') AS color FROM rules r
+       JOIN calendars tc ON tc.id = r.target_calendar_id WHERE tc.account_id = ?`,
+    )
+      .bind(o)
+      .first<{ color: string }>();
+    expect(colour?.color).toBe("Focus");
   });
 });

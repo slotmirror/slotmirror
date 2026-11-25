@@ -13,6 +13,7 @@ import {
   canPassCalendar,
   canPassTentative,
   passCalendarOf,
+  passCalendarsFor,
   passCategoriesFor,
   passSourceCalendars,
   type PassPair,
@@ -750,6 +751,13 @@ function RowArrow() {
   );
 }
 
+/** A choice after the colours in a row's colour list; `stale` for a calendar that left the list. */
+interface ExtraOption {
+  value: string;
+  label: string;
+  stale: boolean;
+}
+
 /**
  * The categories that the copies carry from their events. Between two calendars of one provider
  * the list holds the source values, as the filter does: names for Outlook, ticked colours for
@@ -761,8 +769,10 @@ function RowArrow() {
  *
  * From Google to Outlook the colour list of a row also offers "All events from <calendar>" for
  * each source calendar of the direction, also if it has only one: Todoist, for example, writes
- * events without a colour into a calendar of its own. A row whose calendar is no longer a source
- * keeps its choice, so that the person sees it and can clear it; the save refuses it.
+ * events without a colour into a calendar of its own. A stored row whose calendar is no longer a
+ * source keeps its choice, marked "not a source" or "removed calendar", so that the person sees
+ * it and can clear it. Only that row offers the calendar: a new row, also one the script adds,
+ * offers the source calendars only. The save keeps such a row, which has no effect.
  */
 function PassCategories(props: {
   from: EditorAccount;
@@ -839,30 +849,32 @@ function PassCategories(props: {
     rows.push({ from: "", to: "", tentative: false });
   // Only Outlook shows a tentative copy, and only a Google event lacks the status of its own.
   const withTentative = canPassTentative(from.provider, to.provider);
+  const withCalendars = canPassCalendar(from.provider, to.provider);
   const sourceCalendars = passSourceCalendars(direction);
-  const calendarChoices = canPassCalendar(from.provider, to.provider)
-    ? [
-        ...new Set([
-          ...sourceCalendars,
-          ...rows.flatMap((row) => {
-            const id = passCalendarOf(row.from);
-            return id === null ? [] : [id];
-          }),
-        ]),
-      ].map((id) => {
-        const calendar = from.calendars.find((entry) => entry.id === id);
-        return {
-          value: passCalendarKey(id),
-          label: calendar ? text.allEvents(calendar.name) : text.allEventsRemoved,
-        };
-      })
-    : [];
+  const calendarOption = (id: string, stale: boolean): ExtraOption => {
+    const calendar = from.calendars.find((entry) => entry.id === id);
+    const label = !calendar
+      ? text.allEventsRemoved
+      : stale
+        ? text.allEventsNotSource(calendar.name)
+        : text.allEvents(calendar.name);
+    return { value: passCalendarKey(id), label, stale };
+  };
+  const sourceChoices = withCalendars ? sourceCalendars.map((id) => calendarOption(id, false)) : [];
+  // A row whose calendar is no longer a source offers it as its own choice; no other row does.
+  const calendarChoices = (row: PassPair): ExtraOption[] => {
+    const id = withCalendars ? passCalendarOf(row.from) : null;
+    return id === null || sourceCalendars.includes(id)
+      ? sourceChoices
+      : [...sourceChoices, calendarOption(id, true)];
+  };
   // After a refusal, the rows that do not fit on their own are marked; a list that is only too long
   // marks none, and the reason stands under the rows. A row without a name is blank, as on save.
+  const allowed = passCalendarsFor(direction);
   const rowInvalid = (row: PassPair) =>
     invalid &&
     (sourceIsGoogle ? row.to : row.from).trim() !== "" &&
-    "problem" in passCategoriesFor(from.provider, to.provider, [row], sourceCalendars);
+    "problem" in passCategoriesFor(from.provider, to.provider, [row], allowed);
   const name = (
     field: "passFrom" | "passTo",
     value: string,
@@ -887,7 +899,7 @@ function PassCategories(props: {
     prefix: string,
     calendar: EditorAccount,
     marked: boolean,
-    extra: readonly { value: string; label: string }[] = [],
+    extra: readonly ExtraOption[] = [],
   ) => (
     <span class="select">
       <select
@@ -903,8 +915,13 @@ function PassCategories(props: {
             {t.editor.googleColor(option.id)}
           </option>
         ))}
+        {/* The script drops a stale choice from a row it adds (`mirroring.js`). */}
         {extra.map((option) => (
-          <option value={option.value} selected={value === option.value}>
+          <option
+            value={option.value}
+            selected={value === option.value}
+            data-pass-stale={option.stale ? "" : undefined}
+          >
             {option.label}
           </option>
         ))}
@@ -952,7 +969,7 @@ function PassCategories(props: {
           return (
             <div class="mx-pass-row">
               {sourceIsGoogle
-                ? color("passFrom", row.from, "color:", from, marked, calendarChoices)
+                ? color("passFrom", row.from, "color:", from, marked, calendarChoices(row))
                 : name("passFrom", row.from, from, marked)}
               <RowArrow />
               {sourceIsGoogle
