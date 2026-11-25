@@ -738,8 +738,8 @@ describe("carried categories for all events of a source calendar", () => {
     const { user, cookie, w, g, todoist, main } = await withTodoist("mpcalshow");
     const row = passRow(await panel(cookie, g, w));
     const first = row.slice(row.indexOf('<select name="passFrom"'), row.indexOf("</select>"));
-    expect(first).toContain(`<option value="calendar:${todoist}">All events from Todoist</option>`);
-    expect(first).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    expect(first).toContain(`<option value="calendar:${todoist}">Todoist (all events)</option>`);
+    expect(first).toContain(`<option value="calendar:${main}">Main (all events)</option>`);
     // The colours come first, so that the list reads as before.
     expect(first.indexOf('value="color:11"')).toBeLessThan(first.indexOf("calendar:"));
     await setDirection(env, user, w, g, "busy");
@@ -764,7 +764,7 @@ describe("carried categories for all events of a source calendar", () => {
     const row = passRow(await panel(cookie, g, w));
     const second = row.split('class="mx-pass-row"')[2] ?? "";
     expect(second).toContain(
-      `<option value="calendar:${todoist}" selected="">All events from Todoist</option>`,
+      `<option value="calendar:${todoist}" selected="">Todoist (all events)</option>`,
     );
     expect(second).toMatch(/name="passTo"[^>]*value="Work Blocker"/);
 
@@ -840,11 +840,11 @@ describe("carried categories for all events of a source calendar", () => {
     const [held, empty, ...more] = rowSelects(passRow(await panel(cookie, g, w)));
     expect(more).toEqual([]);
     expect(held).toContain(
-      `<option value="calendar:${todoist}" selected="" data-pass-stale="">All events from Todoist (not a source)</option>`,
+      `<option value="calendar:${todoist}" selected="" data-pass-stale="">Todoist (not a source)</option>`,
     );
-    expect(held).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    expect(held).toContain(`<option value="calendar:${main}">Main (all events)</option>`);
     // The empty row, which the script copies for a new row, offers the source calendars only.
-    expect(empty).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    expect(empty).toContain(`<option value="calendar:${main}">Main (all events)</option>`);
     expect(empty).not.toContain(todoist);
   });
 
@@ -853,7 +853,7 @@ describe("carried categories for all events of a source calendar", () => {
     await env.DB.prepare("DELETE FROM calendars WHERE id = ?").bind(todoist).run();
     const [held, empty] = rowSelects(passRow(await panel(cookie, g, w)));
     expect(held).toContain(
-      `<option value="calendar:${todoist}" selected="" data-pass-stale="">All events from a removed calendar</option>`,
+      `<option value="calendar:${todoist}" selected="" data-pass-stale="">Removed calendar (all events)</option>`,
     );
     expect(empty).not.toContain(todoist);
   });

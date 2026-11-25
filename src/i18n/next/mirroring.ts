@@ -175,16 +175,17 @@ export const mirroringEn = {
     chooseColor: "Choose a colour",
     /**
      * Google to Outlook: a choice in a row's colour list that matches every event of one source
-     * calendar, also events without a colour, such as those that Todoist writes.
+     * calendar, also events without a colour, such as those that Todoist writes. The name comes
+     * first, because a closed list shows only the start of its choice.
      */
-    allEvents: (calendar: string) => `All events from ${calendar}`,
+    allEvents: (calendar: string) => `${calendar} (all events)`,
     /**
      * The same choice for a stored row whose calendar still exists but is no longer a source of the
      * mirroring. Only the row that holds it offers it; the row has no effect.
      */
-    allEventsNotSource: (calendar: string) => `All events from ${calendar} (not a source)`,
+    allEventsNotSource: (calendar: string) => `${calendar} (not a source)`,
     /** The same choice for a stored row whose calendar slotmirror no longer knows. */
-    allEventsRemoved: "All events from a removed calendar",
+    allEventsRemoved: "Removed calendar (all events)",
     addRow: "Add a row",
     /**
      * Google to Outlook: the switch of a row that shows the copy of a busy event as tentative.
@@ -486,9 +487,9 @@ export const mirroringDe: MirroringMessages = {
     category: (calendar) => `Kategorie in ${calendar}`,
     color: (calendar) => `Farbe in ${calendar}`,
     chooseColor: "Farbe wählen",
-    allEvents: (calendar) => `Alle Termine aus ${calendar}`,
-    allEventsNotSource: (calendar) => `Alle Termine aus ${calendar} (keine Quelle)`,
-    allEventsRemoved: "Alle Termine aus einem entfernten Kalender",
+    allEvents: (calendar) => `${calendar} (alle Termine)`,
+    allEventsNotSource: (calendar) => `${calendar} (keine Quelle)`,
+    allEventsRemoved: "Entfernter Kalender (alle Termine)",
     addRow: "Zeile hinzufügen",
     tentative: "Mit Vorbehalt",
     tentativeIn: (calendar) => `Mit Vorbehalt in ${calendar}`,
