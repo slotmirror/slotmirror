@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       hono:
-        specifier: 4.13.16
-        version: 4.13.16
+        specifier: 4.13.20
+        version: 4.13.20
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -2153,8 +2153,8 @@ packages:
   hastscript@9.0.3:
     resolution: {integrity: sha512-1ALZXSmCGmW3h8AMz4R4+QKSKFi7sNgXLVwmwB8FYVtl1CwQ3WDkSAEY/d5tp1g/vbQgq2s1WlHgfO3jbw1TsA==}
 
-  hono@4.13.16:
-    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
+  hono@4.13.20:
+    resolution: {integrity: sha512-xo6gecEJQ+CjTtOUUbcLHE8CdRKMeF4qITe+DT+OhFnSUmZR/ZBa9XavAfiGh4HlukmlaHFdaK4dz5tkTYFNmA==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@3.0.3:
@@ -5185,7 +5185,7 @@ snapshots:
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
 
-  hono@4.13.16: {}
+  hono@4.13.20: {}
 
   html-escaper@3.0.3: {}
 
