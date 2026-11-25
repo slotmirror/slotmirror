@@ -52,6 +52,13 @@ export interface BlockContent {
    * content hash of blocks without a colour stays as before.
    */
   color?: string;
+  /**
+   * Target values of the rule's `passCategories` entries that match a category of the event, in
+   * list order and each once (compared without case): Outlook category names or Google colour IDs.
+   * The writer of each provider keeps the values it can show. Absent without a match, so that the
+   * content hash of blocks without passed categories stays as before.
+   */
+  categories?: string[];
 }
 
 /** A block that the target calendar should contain. */

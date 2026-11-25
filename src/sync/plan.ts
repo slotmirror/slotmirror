@@ -57,17 +57,72 @@ function included(
 export function blockContent(event: SourceEvent, options: RuleOptions): BlockContent {
   const level = event.isPrivate ? "busy" : options.detailLevel;
   const withTitle = level !== "busy" && event.subject.trim() !== "";
+  const status = event.showAs === "unknown" ? "busy" : event.showAs;
   return {
     start: event.allDay ? event.start : shifted(event.start, -options.bufferBefore),
     end: event.allDay ? event.end : shifted(event.end, options.bufferAfter),
     allDay: event.allDay,
-    showAs: event.showAs === "unknown" ? "busy" : event.showAs,
+    showAs: status === "busy" && passesTentative(event, options) ? "tentative" : status,
     isPrivate: options.markPrivate || event.isPrivate,
     subject: withTitle ? event.subject : options.blockTitle,
     location: level === "title_location" || level === "full" ? event.location : "",
     body: level === "full" ? event.body : "",
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
+    ...passedCategories(event, options),
   };
+}
+
+/**
+ * The `categories` of a block: the target value of each `passCategories` entry whose `from` matches
+ * a category of the event, in list order and each once, compared without case. A blank `to` takes
+ * `from` as written, and the colour ID for a Google colour "color:<id>". Empty without a match, so
+ * that the content stays as before. Categories pass also for an event the source marks private:
+ * the list holds only names that the user chose to show, unlike the title or the body.
+ */
+function passedCategories(event: SourceEvent, options: RuleOptions): { categories?: string[] } {
+  if (options.passCategories.length === 0 || event.categories.length === 0) return {};
+  const own = new Set(event.categories.map(categoryKey));
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const { from, to } of options.passCategories) {
+    const key = categoryKey(from);
+    if (key === "" || !own.has(key)) continue;
+    const value = to.trim() || blankTarget(from);
+    if (value === "" || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    values.push(value);
+  }
+  return values.length === 0 ? {} : { categories: values };
+}
+
+/**
+ * True if a `passCategories` entry with `tentative` matches a category of the event, compared as
+ * in `passedCategories`. The mark belongs to the entry, so it also counts for an entry whose target
+ * value an earlier entry already gave.
+ *
+ * The block then shows as tentative, and its dedup key is the key of a tentative block, because
+ * `dedupText` reads the block status. That is on purpose. The marker, not the dedup key, finds the
+ * existing block of an event, so turning the mark on or off updates that block in place: its
+ * content hash and its dedup key change, its marker stays. Across rules, a tentative block then
+ * stands in only for a tentative one. A rule without the mark that blocks the same event from
+ * another calendar still writes its busy block, so that the target shows busy where a source says
+ * busy. A key from the source status would let the tentative block hide that busy one.
+ */
+function passesTentative(event: SourceEvent, options: RuleOptions): boolean {
+  if (event.categories.length === 0) return false;
+  const marked = options.passCategories.filter((entry) => entry.tentative);
+  if (marked.length === 0) return false;
+  const own = new Set(event.categories.map(categoryKey));
+  return marked.some(({ from }) => {
+    const key = categoryKey(from);
+    return key !== "" && own.has(key);
+  });
+}
+
+/** The value of a blank `to`: the colour ID for a Google colour key, else the name as written. */
+function blankTarget(from: string): string {
+  const name = from.trim();
+  return /^color:(?:[1-9]|1[01])$/i.test(name) ? name.slice("color:".length) : name;
 }
 
 /**
@@ -119,6 +174,8 @@ export async function dedupKeyFor(scope: string, content: BlockContent): Promise
   return shortHash(dedupText(scope, content));
 }
 
+// No colour and no passed categories: a change of them alone must not make a second block. The
+// status is that of the block, also where `passesTentative` changes it.
 function dedupText(scope: string, content: BlockContent): string {
   const subject = content.subject.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
   const allDay = content.allDay ? "all-day" : "timed";

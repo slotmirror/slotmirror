@@ -1,6 +1,6 @@
 ---
 title: Settings reference
-description: All variables and secrets of a slotmirror deployment, and the sync settings on the Rules page.
+description: All variables and secrets of a slotmirror deployment, and the sync settings on the Mirroring page.
 ---
 
 One deployment serves one person or one team. Each user signs in, connects their own calendars
@@ -41,6 +41,7 @@ secrets and a sign-in provider are present, every page shows a checklist of what
 | `ALERT_WEBHOOK_URL`               | secret   | Optional. Incoming webhook for operator alerts. See [Alerts](#alerts).                        |
 | `HEARTBEAT_URL`                   | secret   | Optional. Outside monitor that hears a GET once an hour. See below.                           |
 | `MCP_ENABLED`                     | variable | Optional. `1` turns on the read-only [MCP server](/docs/mcp/) and API tokens.                 |
+| `MCP_EVENTS_ENABLED`              | variable | Optional. `1` offers the MCP tool [`list_events`](/docs/mcp/#calendar-events).                |
 
 If you remove someone from these settings, their access ends at their next request. Sessions last
 12 hours. Signing in again is one click with the provider.
@@ -131,29 +132,31 @@ rule can then wait some hours longer for its alert.
 All alerts depend on the cron. If the cron itself does not run, for example because the Worker is
 down or its trigger is gone, no alert arrives. Use an outside uptime check for that case.
 
-## Settings for all calendars
+## Settings for all mirrorings
 
-![Sync settings for all calendars](../../../../../docs/images/settings.png)
+![The panel For all mirrorings on the Mirroring page](../../../../../docs/images/settings.png)
 
-Each user sets these on the **Rules** page, under **For all calendars**. They apply to every direction.
+Each user sets these on the **Mirroring** page. Choose **For all mirrorings** in the header. They
+apply to every mirroring.
 
-| Setting                               | Effect                                                                                   |
-| ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Time window                           | How many days ahead the sync looks.                                                      |
-| Title of busy blocks                  | The title of copies at the level "As busy".                                              |
-| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.   |
-| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.            |
-| Mark copies as private                | People who can see your calendar see "Private" instead of the title. You see everything. |
-| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.               |
-| Skip Google events with these colours | Google event colours to leave out.                                                       |
+| Setting                               | Effect                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How far ahead                         | How many days ahead the sync looks. Events up to this many days from today are copied.                                                                                                                                                                                                                                                   |
+| Title of busy copies                  | The title of copies at the level **Busy only**. Leave it empty for "Busy".                                                                                                                                                                                                                                                               |
+| Skip all-day events                   | Off by default. If on, holidays and days off do not block the whole day in the others.                                                                                                                                                                                                                                                   |
+| Skip tentative events                 | Invitations answered with "maybe", and events marked tentative, do not block.                                                                                                                                                                                                                                                            |
+| What others see, by default           | **Private event**: people who can see your calendar see a private event, or "Busy" in Google Calendar, instead of the title. You see everything. The choice applies to mirrorings you turn on later. Existing mirrorings keep their own choice, unless you also tick **Also apply to N existing mirrorings** (shown when there are any). |
+| Skip events with these categories     | Outlook category names, separated by commas, for example `Private, Focus`.                                                                                                                                                                                                                                                               |
+| Skip Google events with these colours | Google event colours to leave out.                                                                                                                                                                                                                                                                                                       |
 
 Events marked private in the source never carry more than "Busy".
 
 ## Copy only some categories
 
-A direction can copy only part of its source. Open a source on the **Rules** page, and open **Copy only some
-categories** in the row of the target. The list applies to that direction only. The exclusions under
-**For all calendars** stay as they are.
+A mirroring can copy only part of its source. Open the mirroring on the **Mirroring** page, and
+fill **Only these categories** (for an Outlook source) or **Only these colours** (for a Google
+source) under **Limits**. The list applies to that mirroring only. The skip settings under **For
+all mirrorings** stay as they are.
 
 The list is empty by default, and then every event is copied. If the list has entries, an event
 needs at least one of them. An event without a category is not copied.
@@ -167,3 +170,40 @@ needs at least one of them. An event without a category is not copied.
 - If an event leaves the list, the next sync removes its block. If it comes back, the next sync
   writes the block again. Each occurrence of a recurring event counts on its own.
 - A block that ended before the sync window stays, as with the other filters.
+
+## Carry categories to the copies
+
+By default a copy carries no category or colour of its event, at every level. A category name can
+give away what an event is about. You can let chosen categories pass. Open the mirroring on the
+**Mirroring** page, and fill **Carry categories** (for an Outlook source) or **Carry colours** (for
+a Google source) under **Look of the copies**. The list applies to that mirroring only, and nothing
+passes unless it is listed.
+
+- Between two Outlook accounts, list the category names, separated by commas. The copy carries
+  each name as it is written in the list, not as the event wrote it.
+- Between two Google accounts, tick the colours. The copy carries the same colours.
+- From Outlook to Google, each row pairs a category name with the colour that the copy gets.
+- From Google to Outlook, each row pairs a colour with the category name that the copy gets.
+- From Google to Outlook, one colour can have several rows. The copy then carries each name.
+- From Google to Outlook, a row can also show the copy as tentative. Turn on **Tentative** in the
+  row. A busy event in that colour then shows as tentative in Outlook, so that others see that the
+  time can move. Google has no tentative status for an event that you made yourself. A free or
+  tentative event keeps its status. Turn the switch off, and the copy shows as busy again. If one
+  row of a colour has the switch on, every copy in that colour shows as tentative.
+- A tentative copy never stands in for a busy one. If another mirroring copies the same event as
+  busy into the same calendar, that calendar shows both copies.
+
+The panel shows the saved rows and one empty row. Choose **Add a row** for more rows. Without
+JavaScript, fill the empty row and save; the panel then shows a new empty row. In a row, clear the
+name to remove the row: a row without a name counts as empty. A row with a name needs a colour. A
+name has at most 100 characters and no comma. Upper and lower case do not matter when slotmirror
+matches a name. A mirroring carries at most 50 categories.
+
+- In Outlook, a copy keeps the colour of the copies and adds each carried category. A carried name
+  that is not in the category list of the target mailbox shows without a colour.
+- A Google event has one colour. If an event matches several rows, the first row wins, and it wins
+  over the colour of the copies.
+- A copy of an event that the source marks private also carries its listed categories. The list
+  holds only names that you chose to show.
+- A category that someone adds by hand to a copy stays until slotmirror writes the copy again, for
+  example after the event or the list changes.

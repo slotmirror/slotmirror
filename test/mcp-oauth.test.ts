@@ -6,8 +6,6 @@ import worker from "../src/index";
 import { OAUTH_COOKIE } from "../src/oauth";
 import { base64url, SESSION_COOKIE } from "../src/session";
 import { BASE, signIn } from "./helpers";
-// @ts-expect-error `?raw` imports are untyped without `vite/client`
-import editorScript from "../public/editor.js?raw";
 
 const RESOURCE = `${BASE}/mcp`;
 const LOOPBACK = "http://127.0.0.1:33418/callback";
@@ -200,7 +198,7 @@ describe("discovery", () => {
       expect(await response.json()).toMatchObject({
         resource,
         authorization_servers: [BASE],
-        scopes_supported: ["mcp:read"],
+        scopes_supported: ["mcp:read", "mcp:events"],
         bearer_methods_supported: ["header"],
       });
     }
@@ -244,7 +242,7 @@ describe("discovery", () => {
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
-      scopes_supported: ["mcp:read"],
+      scopes_supported: ["mcp:read", "mcp:events"],
       authorization_response_iss_parameter_supported: true,
     });
   });
@@ -593,16 +591,6 @@ describe("authorization", () => {
     const held = /<form[^>]*data-hold[^>]*>([\s\S]*?)<\/form>/.exec(html)?.[1] ?? "";
     expect(held.match(/<button[^>]*disabled/g)).toHaveLength(2);
     expect(html).toMatch(/<noscript>[\s\S]*<form[^>]*action="\/oauth\/authorize"/);
-    // The script turns them on. Its hold block comes first, so that no error in a later part of
-    // the shared page script can leave the consent buttons off for good.
-    const script = String(editorScript);
-    const firstCode = script
-      .split("\n")
-      .find((line) => line.trim() !== "" && !line.startsWith("//"));
-    expect(firstCode).toBe("{");
-    const hold = script.slice(0, script.indexOf("\n}\n"));
-    expect(hold).toContain('querySelectorAll("form[data-hold] button")');
-    expect(hold).toContain("button.disabled = false");
   });
 
   it("shows the client's name, where it returns to, and allows that origin as form target", async () => {
@@ -623,6 +611,171 @@ describe("authorization", () => {
       "form-action 'self' http://127.0.0.1:33418",
     );
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("frames the consent as a step outside the app: no navigation, the account that answers", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    // Like the sign-in page: the logo bar, but no sidebar, page links or account menu.
+    expect(html).toContain('class="pub-head"');
+    const inApp = await (await fetchApp("/tokens", { headers: { cookie } })).text();
+    for (const part of [
+      'class="sidebar"',
+      "<nav",
+      'href="/mirroring"',
+      'href="/calendars"',
+      'href="/tokens"',
+      'popovertarget="user-menu"',
+    ]) {
+      // Control: each part is on a page of the app.
+      expect(inApp).toContain(part);
+      expect(html).not.toContain(part);
+    }
+    expect(html).not.toContain('href="/rules"');
+    expect(html).toContain("Signed in as owner@example.com");
+    // The tile shows a letter, never a logo, and the warning and the target stay on the page.
+    expect(html).toMatch(/class="pub-tile is-app"[^>]*>A</);
+    expect(html).toContain("slotmirror did not check it");
+    expect(html).toMatch(/<dt>Returns to<\/dt><dd[^>]*>127\.0\.0\.1:33418<\/dd>/);
+    // The logo appears twice; each id must be unique, or the second mark loses its hatch.
+    const marks = [...html.matchAll(/<svg class="brand-mark"[\s\S]*?<\/svg>/g)].map(([m]) => m);
+    expect(marks).toHaveLength(2);
+    expect(new Set(marks).size).toBe(2);
+    const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+    const hatched = marks.filter((mark) => mark.includes("url(#"));
+    expect(hatched).toHaveLength(1);
+    expect(ids).toContain(/url\(#([^)]+)\)/.exec(hatched[0] ?? "")?.[1]);
+  });
+
+  it("keeps a language switch on the consent page that reloads the same request", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    // The consent page has no account menu, so the language switch sits in the footer.
+    expect(html).not.toContain('id="user-menu"');
+    // The language group ends where the theme group of the footer starts.
+    const group =
+      /<span class="seg" role="group" aria-label="Language">([\s\S]*?)<span class="seg" role="group" aria-label="Theme"/.exec(
+        html,
+      );
+    expect(group?.[1]).toContain('aria-current="true"');
+    const links = [...(group?.[1] ?? "").matchAll(/<a [^>]*href="([^"]+)"[^>]*hreflang="(\w+)"/g)];
+    expect(links.length).toBeGreaterThan(0);
+    for (const [, href = "", code = ""] of links) {
+      const target = new URL(href.replaceAll("&amp;", "&"), BASE);
+      // Same origin, the authorization endpoint, the same request, and only the language added.
+      expect(target.origin).toBe(BASE);
+      expect(target.pathname).toBe("/oauth/authorize");
+      expect(target.searchParams.get("lang")).toBe(code);
+      target.searchParams.delete("lang");
+      expect(target.search.slice(1)).toBe(query);
+    }
+    // Following the link shows the same request in the other language, with its own ticket.
+    const german = links.find(([, , code]) => code === "de");
+    const followed = await fetchApp((german?.[1] ?? "").replaceAll("&amp;", "&"), {
+      headers: { cookie },
+    });
+    expect(followed.status).toBe(200);
+    const page = await followed.text();
+    expect(page).toContain('<html lang="de"');
+    expect(page).toMatch(/name="ticket" value="[^"]+"/);
+    expect(page).toContain("127.0.0.1:33418");
+  });
+
+  it("cannot turn the language switch into a link to another site", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow, { lang: "//evil.example/x" });
+    const hrefs = [...html.matchAll(/<a [^>]*href="([^"]+)"[^>]*hreflang=/g)].map((m) =>
+      (m[1] ?? "").replaceAll("&amp;", "&"),
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      expect(href.startsWith("/oauth/authorize?")).toBe(true);
+      expect(new URL(href, BASE).origin).toBe(BASE);
+    }
+  });
+
+  it("puts a letter or digit in the app tile, never a symbol that could read as a badge", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const cases: [string, string][] = [
+      ["\u2705 Verified companion", "V"],
+      ["\u200b\u0301agent", "A"],
+      ["\ufdfd", "?"],
+      ["42 tools", "4"],
+    ];
+    for (const [name, initial] of cases) {
+      const client = await registeredClient({ client_name: name });
+      const flow: Flow = {
+        clientId: client.client_id,
+        verifier: newVerifier(),
+        redirectUri: LOOPBACK,
+      };
+      const { html } = await consent(cookie, flow);
+      expect(/class="pub-tile is-app"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(initial);
+    }
+  });
+
+  it("signs out a user who is not the right one, and the request waits for the next sign-in", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient({ client_name: "Agent" });
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    const form = /<form method="post" action="\/auth\/logout"[^>]*>([\s\S]*?)<\/form>/.exec(html);
+    expect(form?.[1]).toContain("Not you?");
+    const resume = /name="resume" value="([^"]+)"/
+      .exec(form?.[1] ?? "")?.[1]
+      ?.replaceAll("&amp;", "&");
+    expect(resume).toBe(`/oauth/authorize?${query}`);
+
+    const out = await postForm("/auth/logout", { resume: resume ?? "" }, { cookie, origin: BASE });
+    expect(out.status).toBe(302);
+    expect(out.headers.get("location")).toBe(`/oauth/authorize?${query}`);
+    expect(out.headers.get("set-cookie")).toMatch(/slotmirror_session=;/);
+    // Signed out, the same request sets the resume cookie, as for any visitor.
+    const again = await fetchApp(`/oauth/authorize?${query}`);
+    expect(again.headers.get("location")).toBe("/");
+    expect(again.headers.get("set-cookie")).toContain("slotmirror_resume=");
+
+    // Any other target goes home, so the form cannot send a user to another page or site.
+    for (const target of [
+      "https://evil.example/",
+      "//evil.example/",
+      "/rules",
+      "/mirroring",
+      "/next/tokens",
+      "/oauth/authorizeX",
+      // A line break would make the Location header throw; a long path would not fit the cookie.
+      "/oauth/authorize?a\r\nb",
+      `/oauth/authorize?${"a".repeat(2000)}`,
+    ]) {
+      const response = await postForm("/auth/logout", { resume: target }, { origin: BASE });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/");
+    }
   });
 
   it("accepts any port for a loopback redirect, but not another path", async () => {
@@ -1191,17 +1344,19 @@ describe("ending a connection", () => {
     const page = await fetchApp("/tokens", { headers: { cookie } });
     const html = await page.text();
     expect(html).toContain("Test agent");
-    const grantId = /action="\/tokens\/apps\/([^/]+)\/revoke"/.exec(html)?.[1];
+    const grantId = /href="\/tokens\?a=([^&"]+)"/.exec(html)?.[1];
     expect(grantId).toBeTruthy();
     const response = await postForm(`/tokens/apps/${grantId}/revoke`, {}, { cookie, origin: BASE });
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect((await mcpCall(tokens.access_token)).status).toBe(401);
   });
 
   it("shows the admin's end button for a user who has only a connected app", async () => {
     const admin = await signIn("admin@example.com");
     const { user } = await connected();
-    const page = await (await fetchApp("/admin", { headers: { cookie: admin.cookie } })).text();
+    const page = await (
+      await fetchApp(`/admin?u=${user.id}`, { headers: { cookie: admin.cookie } })
+    ).text();
     expect(page).toContain(`/admin/users/${user.id}/revoke-tokens`);
   });
 
@@ -1214,7 +1369,7 @@ describe("ending a connection", () => {
         {},
         { cookie: admin.cookie, origin: BASE },
       );
-      expect(response.status).toBe(302);
+      expect(response.status).toBe(303);
       expect((await mcpCall(tokens.access_token)).status).toBe(401);
       expect((await refresh(flow, tokens.refresh_token)).status).toBe(400);
       // The rows go too: a reset must free the slots, not only stop the tokens.
@@ -1280,5 +1435,107 @@ describe("ending a connection", () => {
     const stranger = await postForm("/oauth/revoke", { token: "x", client_id: "smc_nobody" });
     expect(stranger.status).toBe(401);
     expect(stranger.headers.get("www-authenticate")).toContain("Basic");
+  });
+});
+
+describe("event access", () => {
+  /** Allow a flow on the consent page with the given form fields, and exchange the code. */
+  async function allow(fields: Record<string, string>, overrides?: Partial<Env>) {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { ticket } = await consent(cookie, flow);
+    if (!ticket) throw new Error("no ticket");
+    const init = {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie,
+        origin: BASE,
+      },
+      body: new URLSearchParams({ ticket, decision: "allow", ...fields }).toString(),
+    };
+    const decided = overrides
+      ? await fetchWith(overrides, "/oauth/authorize", init)
+      : await fetchApp("/oauth/authorize", init);
+    expect(decided.status).toBe(302);
+    const code = new URL(decided.headers.get("location") ?? "").searchParams.get("code");
+    if (!code) throw new Error("no code");
+    const response = await exchange(flow, code);
+    expect(response.status).toBe(200);
+    return { cookie, flow, tokens: (await response.json()) as Tokens };
+  }
+
+  async function toolsOf(accessToken: string): Promise<string[]> {
+    const body = (await (await mcpCall(accessToken)).json()) as {
+      result?: { tools?: { name: string }[] };
+    };
+    return (body.result?.tools ?? []).map((tool) => tool.name);
+  }
+
+  it("offers an unticked box on the consent page, only while the deployment offers events", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { html } = await consent(cookie, flow);
+    // Two boxes, one per form (with and without script), neither ticked.
+    expect(html.match(/type="checkbox" name="events" value="1"/g)?.length).toBe(2);
+    expect(html).not.toMatch(/name="events"[^>]*checked/);
+    const query = authorizeQuery(flow, await challengeOf(flow.verifier));
+    const off = await fetchWith({ MCP_EVENTS_ENABLED: "" }, `/oauth/authorize?${query}`, {
+      headers: { cookie },
+    });
+    expect(off.status).toBe(200);
+    expect(await off.text()).not.toContain('name="events"');
+  });
+
+  it("grants events only if the user ticks the box, and keeps the scope through a refresh", async () => {
+    const plain = await allow({});
+    expect(plain.tokens.scope).toBe("mcp:read");
+    expect(await toolsOf(plain.tokens.access_token)).not.toContain("list_events");
+
+    const events = await allow({ events: "1" });
+    expect(events.tokens.scope).toBe("mcp:read mcp:events");
+    expect(await toolsOf(events.tokens.access_token)).toContain("list_events");
+    const renewed = await refresh(events.flow, events.tokens.refresh_token);
+    const next = (await renewed.json()) as Tokens;
+    expect(next.scope).toBe("mcp:read mcp:events");
+    expect(await toolsOf(next.access_token)).toContain("list_events");
+    const page = await fetchApp("/tokens", { headers: { cookie: events.cookie } });
+    expect(await page.text()).toContain("Reads events");
+  });
+
+  it("ignores a ticked box while the deployment does not offer events", async () => {
+    const { tokens } = await allow({ events: "1" }, { MCP_EVENTS_ENABLED: "" });
+    expect(tokens.scope).toBe("mcp:read");
+    expect(await toolsOf(tokens.access_token)).not.toContain("list_events");
+  });
+
+  it("ignores the scope a client asks for: only the box grants events", async () => {
+    const { cookie } = await signIn("owner@example.com");
+    const client = await registeredClient();
+    const flow: Flow = {
+      clientId: client.client_id,
+      verifier: newVerifier(),
+      redirectUri: LOOPBACK,
+    };
+    const { ticket } = await consent(cookie, flow, { scope: "mcp:read mcp:events" });
+    if (!ticket) throw new Error("no ticket");
+    const decided = await postForm(
+      "/oauth/authorize",
+      { ticket, decision: "allow" },
+      { cookie, origin: BASE },
+    );
+    const code = new URL(decided.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const tokens = (await (await exchange(flow, code)).json()) as Tokens;
+    expect(tokens.scope).toBe("mcp:read");
   });
 });

@@ -32,7 +32,7 @@ yourself.
 1. In a clone of your repository, add the slotmirror repository as a remote:
 
    ```sh
-   git remote add upstream https://github.com/michaeljauk/slotmirror
+   git remote add upstream https://github.com/slotmirror/slotmirror
    git fetch upstream
    ```
 
@@ -138,6 +138,35 @@ test this on a live personal account.
 Existing blocks stay as they are, and a block written in UTC also stays that way. Such an all-day
 block stays off the local day, by one hour at CET and by eight hours at Pacific time, until its
 content changes.
+
+## The new interface and its addresses
+
+This release replaces the interface. Read this section before you update.
+
+- **New addresses.** The pages now live at `/` (Overview, and the sign-in when you are signed
+  out), `/mirroring`, `/calendars`, `/activity`, `/admin` and `/tokens`. The page `/tokens` exists
+  only when `MCP_ENABLED=1`.
+- **Redirects for one release.** The address `/rules` answers with a 301 redirect to
+  `/mirroring`, and `/admin/activity` answers with a 308 redirect to the activity of the whole
+  organisation on `/activity`. These redirects stay for one release only. Update bookmarks and
+  links that point to the old addresses. The sign-in, the OAuth flow, the MCP endpoint, the
+  webhooks and the form endpoints keep their addresses.
+- **Migration 0025.** It adds the column `oauth_codes.scope`. It runs with the usual migrate
+  step of `pnpm run deploy`, before the new Worker starts. The change is additive: the previous
+  Worker runs on the new schema.
+- **Assets are built.** The deploy step now builds the static files into `dist/public`, with the
+  content hash in each file name. `wrangler deploy` runs this build through the `build` command in
+  `wrangler.jsonc`, so no extra step is needed. If you deploy with your own config file
+  (`wrangler deploy -c <file>`), set the assets directory and copy the `build` entry from
+  `wrangler.jsonc`:
+
+  ```jsonc
+  "assets": { "directory": "./dist/public" },
+  "build": { "command": "node scripts/asset-manifest.mjs", "watch_dir": "public" },
+  ```
+
+  After the deploy, open a page and check that the styles load. A 404 for `/next` files means the
+  old `./public` directory is still set.
 
 ## After the update
 

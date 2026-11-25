@@ -18,14 +18,14 @@ connect an account.
 The version is below 1.0. Settings and the database can still change between releases.
 :::
 
-![The Rules page: one card per calendar, and an overview of all directions](../../../../../docs/images/editor.png)
+![The Mirroring page: every direction grouped by the calendar it appears in, with the panel of one mirroring open](../../../../../docs/images/editor.png)
 
 ## What it does
 
-- **One group for the common case.** Put your calendars in the block group, and each sees the
-  others only as "Busy", marked private.
-- **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
-  with title, or everything.
+- **One step for the common case.** Choose **Mirror all as busy** on the **Mirroring** page, and
+  each calendar shows the others only as busy, by default as a private event.
+- **More detail where you want it.** Per mirroring you choose what is copied: not copied, busy
+  only, title, or everything. You also choose what others see: a private event, or the same as you.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar

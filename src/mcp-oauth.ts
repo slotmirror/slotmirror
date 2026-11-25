@@ -1,5 +1,6 @@
 import { recordAudit } from "./audit";
 import { base64url, signPayload, verifyPayload } from "./session";
+import { can, credentialActions, EVENTS_SCOPE, READ_SCOPE } from "./permissions";
 import { loadUser, type SignedInUser } from "./users";
 
 /**
@@ -12,7 +13,10 @@ import { loadUser, type SignedInUser } from "./users";
  * Every query of this file lives in a function here; route handlers hold no SQL.
  */
 
-export const OAUTH_SCOPE = "mcp:read";
+/** The scope that every grant has, and that a client without a choice asks for. */
+export const OAUTH_SCOPE = READ_SCOPE;
+/** The scope of a grant whose user also allowed `list_events` on the consent page. */
+export const EVENTS_GRANT_SCOPE = `${READ_SCOPE} ${EVENTS_SCOPE}`;
 export const ACCESS_TOKEN_SECONDS = 3600;
 export const MAX_GRANTS_PER_USER = 10;
 /** New clients per UTC day for the whole deployment. Registration needs no account. */
@@ -21,7 +25,8 @@ export const DAILY_CLIENT_REGISTRATIONS = 1000;
 export const REGISTRATIONS_PER_ADDRESS = 30;
 
 const REFRESH_DAYS = 30;
-const GRANT_DAYS = 90;
+/** The longest life of a grant. The consent page names it. */
+export const GRANT_DAYS = 90;
 const CODE_SECONDS = 300;
 const CONSENT_SECONDS = 600;
 const MAX_REDIRECT_URIS = 5;
@@ -87,7 +92,7 @@ export function protectedResourceMetadata(issuer: string, resource: string) {
   return {
     resource,
     authorization_servers: [issuer],
-    scopes_supported: [OAUTH_SCOPE],
+    scopes_supported: [OAUTH_SCOPE, EVENTS_SCOPE],
     bearer_methods_supported: ["header"],
     resource_name: "slotmirror",
   };
@@ -106,7 +111,7 @@ export function authorizationServerMetadata(issuer: string) {
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: [...AUTH_METHODS],
     revocation_endpoint_auth_methods_supported: [...AUTH_METHODS],
-    scopes_supported: [OAUTH_SCOPE],
+    scopes_supported: [OAUTH_SCOPE, EVENTS_SCOPE],
     authorization_response_iss_parameter_supported: true,
   };
 }
@@ -484,8 +489,17 @@ export async function resumeTarget(
     resumeSecret(env),
     now,
   );
-  const path = payload?.path;
-  return typeof path === "string" && path.startsWith(RESUME_PREFIX) ? path : null;
+  return resumePath(payload?.path);
+}
+
+/**
+ * The value if it is a path of the authorization endpoint, else null. A control character would
+ * make the Location header throw, and a path over 2000 characters would not fit the cookie.
+ */
+export function resumePath(value: unknown): string | null {
+  if (typeof value !== "string" || !value.startsWith(RESUME_PREFIX)) return null;
+  if (value.length > 2000 || /\p{Cc}/u.test(value)) return null;
+  return value;
 }
 
 /**
@@ -525,6 +539,7 @@ export async function issueCode(
   db: D1Database,
   user: SignedInUser,
   ticket: ConsentTicket,
+  scope: typeof OAUTH_SCOPE | typeof EVENTS_GRANT_SCOPE = OAUTH_SCOPE,
   now = Date.now(),
 ): Promise<string> {
   const code = randomValue(CODE_PREFIX);
@@ -536,8 +551,8 @@ export async function issueCode(
     db
       .prepare(
         `INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge,
-                                  resource, session_version, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                                  resource, session_version, expires_at, scope)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         await sha256Hex(code),
@@ -548,6 +563,7 @@ export async function issueCode(
         ticket.resource,
         user.sessionVersion,
         iso(now + CODE_SECONDS * 1000),
+        scope,
       ),
   ]);
   return code;
@@ -612,20 +628,27 @@ export async function authenticateAccessToken(
   token: string,
   issuer: string,
   now = Date.now(),
-): Promise<SignedInUser | null> {
+): Promise<(SignedInUser & { scope: string }) | null> {
   const payload = await accessPayload(env, token, issuer, now);
   if (!payload) return null;
   const grant = await env.DB.prepare(
     `SELECT user_id AS userId, session_version AS sessionVersion, generation,
-            expires_at AS expiresAt
+            expires_at AS expiresAt, scope
      FROM oauth_grants WHERE id = ?`,
   )
     .bind(payload.grant)
-    .first<{ userId: string; sessionVersion: number; generation: number; expiresAt: string }>();
+    .first<{
+      userId: string;
+      sessionVersion: number;
+      generation: number;
+      expiresAt: string;
+      scope: string;
+    }>();
   // The generation is not checked: another instance of the same app may hold the access token of
   // an earlier refresh, and it lasts one hour. Ending the grant ends every token at once.
   if (!grant || Date.parse(grant.expiresAt) <= now) return null;
-  return loadUser(env, grant.userId, grant.sessionVersion);
+  const user = await loadUser(env, grant.userId, grant.sessionVersion);
+  return user ? { ...user, scope: grant.scope } : null;
 }
 
 type TokenResult =
@@ -685,7 +708,7 @@ export async function authenticateClient(
 
 async function tokenResponse(
   env: Env,
-  grant: { id: string; generation: number; resource: string },
+  grant: { id: string; generation: number; resource: string; scope: string },
   refreshToken: string,
   now: number,
 ): Promise<TokenResult> {
@@ -701,7 +724,8 @@ async function tokenResponse(
       token_type: "Bearer",
       expires_in: ACCESS_TOKEN_SECONDS,
       refresh_token: refreshToken,
-      scope: OAUTH_SCOPE,
+      // The scope the user allowed, which may differ from the one the client asked for.
+      scope: grant.scope,
     },
   };
 }
@@ -729,7 +753,7 @@ export async function exchangeCode(
     `DELETE FROM oauth_codes WHERE code_hash = ?
      RETURNING client_id AS clientId, user_id AS userId, redirect_uri AS redirectUri,
                code_challenge AS challenge, resource, session_version AS sessionVersion,
-               expires_at AS expiresAt`,
+               expires_at AS expiresAt, scope`,
   )
     .bind(codeHash)
     .first<{
@@ -740,6 +764,7 @@ export async function exchangeCode(
       resource: string;
       sessionVersion: number;
       expiresAt: string;
+      scope: string;
     }>();
   if (!row) {
     const ended = await env.DB.prepare(
@@ -760,8 +785,9 @@ export async function exchangeCode(
   ) {
     return fail("invalid_grant");
   }
+  // The org may have turned MCP off for members since the consent.
   const user = await loadUser(env, row.userId, row.sessionVersion);
-  if (!user) return fail("invalid_grant");
+  if (!user || !can(user, "apps:connect")) return fail("invalid_grant");
 
   const grantId = crypto.randomUUID();
   const refreshExpires = now + REFRESH_DAYS * DAY_MS;
@@ -784,7 +810,7 @@ export async function exchangeCode(
     ).bind(
       grantId,
       client.id,
-      OAUTH_SCOPE,
+      row.scope,
       row.resource,
       await sha256Hex(refreshToken),
       codeHash,
@@ -809,7 +835,7 @@ export async function exchangeCode(
   });
   return tokenResponse(
     env,
-    { id: grantId, generation: 0, resource: row.resource },
+    { id: grantId, generation: 0, resource: row.resource, scope: row.scope },
     refreshToken,
     now,
   );
@@ -899,7 +925,7 @@ export async function refreshGrant(
   const grant = await env.DB.prepare(
     `SELECT id, client_id AS clientId, user_id AS userId, session_version AS sessionVersion,
             generation, resource, refresh_hash AS refreshHash, refreshed_at AS refreshedAt,
-            refresh_expires_at AS refreshExpiresAt, expires_at AS expiresAt
+            refresh_expires_at AS refreshExpiresAt, expires_at AS expiresAt, scope
      FROM oauth_grants WHERE id = ?`,
   )
     .bind(payload.grant)
@@ -910,6 +936,7 @@ export async function refreshGrant(
       sessionVersion: number;
       generation: number;
       resource: string;
+      scope: string;
       refreshHash: string;
       refreshedAt: string | null;
       refreshExpiresAt: string;
@@ -934,8 +961,10 @@ export async function refreshGrant(
     await env.DB.prepare("DELETE FROM oauth_grants WHERE id = ?").bind(grant.id).run();
     return fail("invalid_grant");
   }
-  // While the policy does not admit the user, the grant stops but stays, as a personal token does.
-  if (!(await loadUser(env, grant.userId, grant.sessionVersion))) return fail("invalid_grant");
+  // While the policy or the org's MCP setting does not admit the user, the grant stops but stays,
+  // as a personal token does.
+  const user = await loadUser(env, grant.userId, grant.sessionVersion);
+  if (!user || !can(user, "apps:connect")) return fail("invalid_grant");
   const refreshExpires = Math.min(now + REFRESH_DAYS * DAY_MS, Date.parse(grant.expiresAt));
   const refreshToken = await signRefreshToken(env, grant.id, grant.generation + 1, refreshExpires);
   const rotated = await env.DB.prepare(
@@ -949,7 +978,12 @@ export async function refreshGrant(
   if (!rotated.meta.changes) return fail("invalid_grant");
   return tokenResponse(
     env,
-    { id: grant.id, generation: grant.generation + 1, resource: grant.resource },
+    {
+      id: grant.id,
+      generation: grant.generation + 1,
+      resource: grant.resource,
+      scope: grant.scope,
+    },
     refreshToken,
     now,
   );
@@ -987,6 +1021,8 @@ export interface ConnectedApp {
   name: string;
   createdAt: string;
   refreshedAt: string | null;
+  /** The user allowed the app to call `list_events`. */
+  events: boolean;
 }
 
 export async function listConnectedApps(
@@ -994,17 +1030,20 @@ export async function listConnectedApps(
   userId: string,
   now = Date.now(),
 ): Promise<ConnectedApp[]> {
-  const [, listed] = await db.batch<ConnectedApp>([
+  const [, listed] = await db.batch<Omit<ConnectedApp, "events"> & { scope: string }>([
     deadGrants(db, userId, now),
     db
       .prepare(
-        `SELECT g.id, c.name, g.created_at AS createdAt, g.refreshed_at AS refreshedAt
+        `SELECT g.id, c.name, g.created_at AS createdAt, g.refreshed_at AS refreshedAt, g.scope
          FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id
          WHERE g.user_id = ? ORDER BY g.created_at DESC LIMIT ?`,
       )
       .bind(userId, MAX_GRANTS_PER_USER),
   ]);
-  return listed?.results ?? [];
+  return (listed?.results ?? []).map(({ scope, ...app }) => ({
+    ...app,
+    events: credentialActions(scope).has("events:read"),
+  }));
 }
 
 /** End one connection of the user. Return false if the user has no such grant. */

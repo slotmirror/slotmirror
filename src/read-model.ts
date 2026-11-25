@@ -8,7 +8,8 @@ import { hasWorkingHours } from "./sync/working-hours";
 /**
  * What the read-only API may show. Each field is named here on purpose: the tools never pass on a
  * row, `rules.options` or an audit `detail`. Tenant IDs, remote calendar IDs, category names, block
- * titles and audit texts stay out. All queries read D1 and take the user from the token.
+ * titles and audit texts stay out. All queries read D1 and take the user from the token. Only
+ * `list_events` also reads calendars, through each account's Durable Object; see `mcp-events.ts`.
  */
 
 /**
@@ -290,3 +291,193 @@ export async function readSyncStatus(
     ),
   };
 }
+
+/**
+ * Source calendars that one `list_events` call reads at most. Each costs one Durable Object call of
+ * this invocation, so this keeps far below the Free plan's 50 subrequests; the provider pages count
+ * on the budget of each account's own instance.
+ */
+export const MAX_EVENT_CALENDARS = 25;
+
+/**
+ * A calendar that `list_events` reads. `remoteId` and `tenantId` serve the read and the detail
+ * cap; they never reach an answer.
+ */
+export interface EventSource {
+  calendarId: string;
+  calendar: string;
+  remoteId: string;
+  accountId: string;
+  email: string;
+  account: string;
+  tenantId: string | null;
+  needsReconnect: boolean;
+}
+
+/** The `accounts` and `calendars` arguments of `list_events`. */
+export interface EventSourceFilters {
+  accounts?: readonly string[] | undefined;
+  calendars?: readonly string[] | undefined;
+}
+
+/**
+ * Source calendars that the query for a filtered call reads at most. The filter in SQL only finds
+ * candidates; the exact check runs on these rows, and the limit of MAX_EVENT_CALENDARS after it.
+ */
+export const MAX_EVENT_CALENDAR_CANDIDATES = 200;
+
+/**
+ * LIKE patterns for a filter, or null for no filter. Each pattern finds every value that
+ * `filterMatches` accepts, and maybe more. SQLite folds the case of ASCII letters only, and lower
+ * case can change the length of a text ("İ" becomes "i" and a combining dot), so any other
+ * character matches any text, and "i" and "k" match any one character, as "İ" and the Kelvin sign
+ * turn into them.
+ */
+function likePatterns(values: readonly string[] | undefined): string | null {
+  if (!values || values.length === 0) return null;
+  return JSON.stringify(
+    values.map((value) =>
+      Array.from(value.trim().toLowerCase())
+        .map((char) => {
+          if (char === "!" || char === "%" || char === "_") return `!${char}`;
+          if (char === "i" || char === "k") return "_";
+          return char.charCodeAt(0) < 0x80 ? char : "%";
+        })
+        .join(""),
+    ),
+  );
+}
+
+/** The exact rule of the `accounts` and `calendars` filters: equal after trim and lower case. */
+export function filterMatches(
+  filter: readonly string[] | undefined,
+  values: readonly string[],
+): boolean {
+  if (!filter || filter.length === 0) return true;
+  const wanted = new Set(filter.map((value) => value.trim().toLowerCase()));
+  return values.some((value) => wanted.has(value.toLowerCase()));
+}
+
+/**
+ * The user's source calendars, the ones the editor reads, and the time zone of the user's first
+ * account with working hours. Only calendars that the user turned on as sources are read: a
+ * calendar shared with the account, but never chosen, stays out. The filters apply before the
+ * limit, so that every calendar the filters name can be read. `truncated` says that more calendars
+ * match than one call reads, or that a filtered query reached MAX_EVENT_CALENDAR_CANDIDATES, so
+ * that some calendars stayed unchecked.
+ */
+export async function readEventSources(
+  db: D1Database,
+  userId: string,
+  filters: EventSourceFilters = {},
+): Promise<{ sources: EventSource[]; truncated: boolean; workTimeZone: string | null }> {
+  const filtered = Boolean(filters.accounts?.length || filters.calendars?.length);
+  const limit = filtered ? MAX_EVENT_CALENDAR_CANDIDATES : MAX_EVENT_CALENDARS;
+  const { results: candidates } = await db
+    .prepare(
+      `SELECT c.id AS calendarId, c.name AS calendar, c.remote_id AS remoteId,
+              a.id AS accountId, a.email, COALESCE(a.display_name, a.email) AS account,
+              a.tenant_id AS tenantId, a.needs_reconnect AS needsReconnect
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ?1 AND c.is_source = 1
+         AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(?2) f
+              WHERE a.id LIKE f.value ESCAPE '!' OR a.email LIKE f.value ESCAPE '!'))
+         AND (?3 IS NULL OR EXISTS (SELECT 1 FROM json_each(?3) f
+              WHERE c.name LIKE f.value ESCAPE '!' OR c.id LIKE f.value ESCAPE '!'))
+       ORDER BY a.created_at, a.id, c.name, c.id LIMIT ?4`,
+    )
+    .bind(userId, likePatterns(filters.accounts), likePatterns(filters.calendars), limit + 1)
+    .all<Omit<EventSource, "needsReconnect"> & { needsReconnect: number }>();
+  const results = candidates
+    .slice(0, limit)
+    .filter(
+      (row) =>
+        filterMatches(filters.accounts, [row.accountId, row.email]) &&
+        filterMatches(filters.calendars, [row.calendar, row.calendarId]),
+    );
+  // The zone does not depend on the filters, so that a date means the same day with and without.
+  const { results: hours } = await db
+    .prepare(
+      `SELECT a.work_hours AS workHours FROM accounts a
+       WHERE a.user_id = ? AND a.work_hours IS NOT NULL
+         AND EXISTS (SELECT 1 FROM calendars c WHERE c.account_id = a.id AND c.is_source = 1)
+       ORDER BY a.created_at, a.id LIMIT ?`,
+    )
+    .bind(userId, MAX_EVENT_CALENDARS + 1)
+    .all<{ workHours: string }>();
+  let workTimeZone: string | null = null;
+  for (const row of hours) {
+    try {
+      const zone = (JSON.parse(row.workHours) as { workTimeZone?: unknown }).workTimeZone;
+      if (typeof zone === "string" && zone !== "") {
+        workTimeZone = zone;
+        break;
+      }
+    } catch {
+      // A stored value that does not parse names no zone.
+    }
+  }
+  return {
+    truncated: results.length > MAX_EVENT_CALENDARS || candidates.length > limit,
+    workTimeZone,
+    sources: results.slice(0, MAX_EVENT_CALENDARS).map((row) => ({
+      calendarId: row.calendarId,
+      calendar: row.calendar,
+      remoteId: row.remoteId,
+      accountId: row.accountId,
+      email: row.email,
+      account: row.account,
+      tenantId: row.tenantId,
+      needsReconnect: row.needsReconnect === 1,
+    })),
+  };
+}
+
+const eventView = z.strictObject({
+  accountId: z.string(),
+  /** The account's display name, or its address. */
+  account: z.string(),
+  calendar: z.string(),
+  /** Null if the event is private, or a detail cap of the deployment withholds it. */
+  title: z.nullable(z.string()),
+  location: z.nullable(z.string()),
+  /** ISO 8601 with the offset of the answer's time zone; a date (YYYY-MM-DD) for all-day events. */
+  start: z.string(),
+  /** Exclusive. For all-day events the day after the last day. */
+  end: z.string(),
+  allDay: z.boolean(),
+  showAs: z.enum(["free", "tentative", "busy", "oof", "workingElsewhere", "unknown"]),
+  private: z.boolean(),
+  declined: z.boolean(),
+  /** One occurrence of a recurring series. */
+  recurring: z.boolean(),
+  /** A block that slotmirror wrote. Listed only with `includeMirrors`. */
+  mirror: z.boolean(),
+});
+export type EventView = z.infer<typeof eventView>;
+
+const eventReadError = z.strictObject({
+  accountId: z.string(),
+  calendar: z.string(),
+  /**
+   * "reconnect": the account needs reconnecting. "throttled": the provider asked to wait. "gone":
+   * the provider no longer finds the calendar or lets the account read it. "failed": anything else.
+   */
+  code: z.enum(["reconnect", "throttled", "gone", "failed"]),
+  retryAfterSeconds: z.optional(z.number()),
+});
+export type EventReadError = z.infer<typeof eventReadError>;
+
+export const eventsAnswer = z.strictObject({
+  start: z.string(),
+  end: z.string(),
+  timeZone: z.string(),
+  events: z.array(eventView),
+  /** Calendars that could not be read. The events of the other calendars are complete. */
+  errors: z.array(eventReadError),
+  /** More events matched than one answer lists. */
+  truncated: z.boolean(),
+  /** The user has more source calendars than one call reads; the rest were not read. */
+  calendarsTruncated: z.boolean(),
+});
+export type EventsAnswer = z.infer<typeof eventsAnswer>;

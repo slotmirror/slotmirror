@@ -47,7 +47,7 @@ bytes, so do not change the number 32.
 
 ## 2. Deploy with the button
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 The button creates the Worker, the D1 database and the Durable Object in your account. In its form:
 
@@ -112,25 +112,26 @@ valid value, and the checklist shows the value it read.
 
 ## 7. Sign in and connect
 
-Open the address of your Worker, sign in, and connect your calendars under **Accounts**. If a sign-in fails, the error page shows a code. Look it up in [Troubleshooting](../troubleshooting/). To add
+Open the address of your Worker, sign in, and connect your calendars on the **Calendars** page with **Connect calendar**. If a sign-in fails, the error page shows a code. Look it up in [Troubleshooting](../troubleshooting/). To add
 the other provider later, repeat steps 5 and 6 for it.
 
-## 8. Watch the first block
+## 8. Watch the first copy
 
-1. On the **Rules** page, put your two calendars in the group **Block each other**, and
-   choose **Save**. See below.
+1. Open the **Mirroring** page. While nothing is mirrored, it shows **Nothing is mirrored yet**.
+   Choose **Mirror all as busy**. Each calendar then shows the events of the others as busy. See
+   below.
 2. In one calendar, create a test event for tomorrow.
-3. Watch the other calendar. With `PUBLIC_URL`, the block appears when the notification arrives. Without it, it
+3. Watch the other calendar. With `PUBLIC_URL`, the copy appears when the notification arrives. Without it, it
    appears at the next run, after up to 10 minutes.
 
-When the block appears, the setup works.
+When the copy appears, the setup works.
 
 ## Deploy by hand
 
 You need Node 22 and pnpm 10.
 
 ```sh
-git clone https://github.com/michaeljauk/slotmirror && cd slotmirror
+git clone https://github.com/slotmirror/slotmirror && cd slotmirror
 pnpm install
 pnpm wrangler login
 pnpm wrangler d1 create slotmirror            # add --jurisdiction=eu to keep data in the EU
@@ -167,14 +168,18 @@ version later, see [Updating your deployment](../updating/).
 
 ## Choose where events go
 
-![Connected accounts](../../../../../docs/images/accounts.png)
+![Connected calendars on the Calendars page](../../../../../docs/images/accounts.png)
 
-1. Connect each account under **Accounts**.
-2. Open **Rules**. Put your calendars in the group **Block each other**: each then
-   sees the others only as "Busy", marked private.
-3. For more detail in one direction, expand the card of the source account and choose **Not**,
-   **As busy**, **With title** or **Everything** per target. The line **There:** shows an example
-   event as the target will show it.
-4. Choose **Save**. The changes apply immediately.
+1. Connect each calendar on the **Calendars** page with **Connect calendar**.
+2. Open **Mirroring** and choose **Mirror all as busy**. Each calendar then shows the events of
+   the others as busy. By default, the setting **What others see** is **Private event**: people who
+   can see the calendar see a private event, or "Busy" in Google Calendar, and not the title.
+3. For more detail in one direction, open its row on the **Mirroring** page. Under **What is
+   copied**, choose **Not copied**, **Busy only**, **Title** or **Everything**. The panel shows what
+   you and others will see.
+4. Choose **Save**. The changes apply within a few minutes to the copies that exist.
 
-![A source card with several calendars of one account](../../../../../docs/images/source-calendars.png)
+On the **Calendars** page you also choose which calendars of one account are copied. Open the
+panel of the account, and turn on the calendars under **Copy from these calendars**.
+
+![The panel of one account with several calendars to copy from](../../../../../docs/images/source-calendars.png)

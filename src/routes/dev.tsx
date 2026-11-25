@@ -1,21 +1,35 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../app-env";
 import { accountSync } from "../durable";
-import { setGroupMembership } from "../editor";
+import { carrier } from "../telemetry";
+import { setDefaultBlockTitle, setGroupMembership } from "../editor";
 import type { Provider } from "../config";
+import { i18nFromContext } from "../i18n";
 import { fakePagePath, measureFetchBudget } from "../providers/fake-calendar";
+import { previewPage } from "../pages/next/public/preview";
+import { render } from "../render";
 
 /**
  * Load tests with simulated calendars, on a local server or on a separate test deployment. Only
- * with DEV_FAKE_CALENDARS=1 and for admins. Without the variable every route answers 404, so a
- * normal deployment never exposes them.
+ * with DEV_FAKE_CALENDARS=1 and for users with "dev:tools" (see `ROUTE_NEEDS`). Without the
+ * variable every route answers 404, so a normal deployment never exposes them.
  */
 export const dev = new Hono<AppEnv>();
 
 dev.use("*", async (c, next) => {
   const user = c.get("user");
-  if (c.env.DEV_FAKE_CALENDARS !== "1" || user?.role !== "admin") return c.notFound();
+  if (c.env.DEV_FAKE_CALENDARS !== "1" || !user) return c.notFound();
   await next();
+});
+
+/**
+ * The pages outside the app, with sample props, for looking at them while signed in: a visitor's
+ * pages cannot be reached on a local server that signs in by itself. `?v=` picks a variant.
+ */
+dev.get("/next-preview/:page", (c) => {
+  const user = c.get("user");
+  const page = user ? previewPage(c.req.param("page"), c.req.query("v") ?? "", user) : null;
+  return page ? render(c, page) : c.notFound();
 });
 
 const DAY = 86_400_000;
@@ -164,6 +178,8 @@ dev.post("/seed", async (c) => {
   )
     .bind(user.id)
     .all<{ id: string }>();
+  // The first group rules store the block title of the language; a stored title stays.
+  await setDefaultBlockTitle(c.env, user.id, i18nFromContext(c).t.editor.defaultBlockTitle);
   for (const row of results) await setGroupMembership(c.env, user, row.id, true);
   // Rules keep their own window, and the group rules may exist from an earlier seed. The calendars
   // start empty, so that nothing is left to trim.
@@ -204,7 +220,7 @@ dev.post("/cycle", async (c) => {
   )
     .bind(user.id)
     .all<{ id: string }>();
-  for (const row of results) await accountSync(c.env, row.id).requestSync();
+  for (const row of results) await accountSync(c.env, row.id).requestSync(carrier());
   return c.json({ started: results.length });
 });
 

@@ -406,6 +406,23 @@ describe("duplicates", () => {
     expect(result.hits).toEqual([`duplicate:${extra?.marker}`]);
   });
 
+  it("finds nothing for a tentative copy next to the busy block of a later rule", async () => {
+    // The planner writes both: the tentative copy of the rule with precedence does not stand in
+    // for a busy block. The comparison must agree and count no duplicate.
+    const tags = [await ruleTagFor("rule-a"), await ruleTagFor("rule-b")];
+    const [earlyId, lateId] = tags[0]! < tags[1]! ? ["rule-a", "rule-b"] : ["rule-b", "rule-a"];
+    const events = [event("event:1", { categories: ["color:5"] })];
+    const marked = { passCategories: [{ from: "color:5", to: "Focus", tentative: true }] };
+    const early = rule(earlyId, marked);
+    const late = rule(lateId!);
+    const kept = await planned(early, events);
+    const extra = await planned(late, events, kept);
+    expect(extra).toHaveLength(1);
+    expect(kept[0]?.dedupKey).not.toBe(extra[0]?.dedupKey);
+    const result = await compared([early, late], events, [...kept, ...extra]);
+    expect(result.counts).toEqual(NONE);
+  });
+
   it("does not count blocks without a dedup key as equal", async () => {
     const tags = await Promise.all(["rule-a", "rule-b"].map((id) => ruleTagFor(id)));
     const [earlyId, lateId] = tags[0]! < tags[1]! ? ["rule-a", "rule-b"] : ["rule-b", "rule-a"];
@@ -603,6 +620,24 @@ const OPTION_CASES: Record<string, () => Promise<OptionRole>> = {
   blockTitle: () => ignored({ blockTitle: "Away" }),
   markPrivate: () => ignored({ markPrivate: false }),
   blockColor: () => ignored({ blockColor: "5" }),
+  passCategories: async () => {
+    // The event has the category, so the option changes the block; the comparison does not see it.
+    const events = [event("event:1", { categories: ["Focus"] })];
+    const change = { passCategories: [{ from: "Focus", to: "", tentative: false }] };
+    const before = await planned(rule(), events);
+    const after = await planned(rule("rule-a", change), events);
+    expect(after[0]?.contentHash).not.toBe(before[0]?.contentHash);
+    expect((await compared([rule("rule-a", change)], events, before)).counts).toEqual(NONE);
+    // A tentative row also changes the status of the copy. Busy and tentative both block, so the
+    // comparison finds the tentative copy and the busy one correct.
+    const marked = { passCategories: [{ from: "Focus", to: "", tentative: true }] };
+    const tentative = await planned(rule("rule-a", marked), events);
+    expect(tentative[0]?.contentHash).not.toBe(after[0]?.contentHash);
+    expect((await compared([rule("rule-a", marked)], events, tentative)).counts).toEqual(NONE);
+    expect((await compared([rule("rule-a", marked)], events, before)).counts).toEqual(NONE);
+    expect((await compared([rule("rule-a", change)], events, tentative)).counts).toEqual(NONE);
+    return "content";
+  },
 };
 
 /** With `drop` the rule wants no block for the event, with `keep` it does. */

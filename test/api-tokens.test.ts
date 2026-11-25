@@ -310,7 +310,7 @@ describe("token page", () => {
       `${BASE}/tokens/${row?.id}/revoke`,
       form({}, cookie),
     );
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
   });
 
@@ -325,7 +325,7 @@ describe("admin", () => {
   it("shows the number of tokens and lets an admin end them", async () => {
     const { token, user } = await newToken();
     const admin = await signIn("admin@example.com");
-    const page = await exports.default.fetch(`${BASE}/admin`, {
+    const page = await exports.default.fetch(`${BASE}/admin?u=${user.id}`, {
       headers: { cookie: admin.cookie },
     });
     expect(await page.text()).toContain(`/admin/users/${user.id}/revoke-tokens`);
@@ -333,7 +333,7 @@ describe("admin", () => {
       `${BASE}/admin/users/${user.id}/revoke-tokens`,
       form({}, admin.cookie),
     );
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(303);
     expect(await authenticateToken(env, HEADER(token))).toBeNull();
     const audit = await env.DB.prepare(
       "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'api_token_revoked'",
@@ -352,5 +352,63 @@ describe("admin", () => {
     );
     expect(response.status).toBe(404);
     expect(await authenticateToken(env, HEADER(token))).not.toBeNull();
+  });
+});
+
+describe("tokens that read events", () => {
+  it("reads events only if the box was ticked when it was created", async () => {
+    const { cookie, user } = await signIn("owner@example.com");
+    // The form for a new token is the panel of `?new=1`.
+    const page = await exports.default.fetch(`${BASE}/tokens?new=1`, { headers: { cookie } });
+    const html = await page.text();
+    expect(html).toContain('type="checkbox" name="events" value="1"');
+    expect(html).not.toMatch(/name="events"[^>]*checked/);
+
+    await exports.default.fetch(`${BASE}/tokens`, form({ name: "plain", days: "30" }, cookie));
+    await exports.default.fetch(
+      `${BASE}/tokens`,
+      form({ name: "calendar", days: "30", events: "1" }, cookie),
+    );
+    const { results } = await env.DB.prepare(
+      "SELECT name, scope FROM api_tokens WHERE user_id = ? ORDER BY name",
+    )
+      .bind(user.id)
+      .all<{ name: string; scope: string }>();
+    expect(results).toEqual([
+      { name: "calendar", scope: "read events" },
+      { name: "plain", scope: "read" },
+    ]);
+    const listed = await listApiTokens(env.DB, user.id);
+    const byName = [...listed].sort((a, b) => a.name.localeCompare(b.name));
+    expect(byName.map((token) => [token.name, token.events])).toEqual([
+      ["calendar", true],
+      ["plain", false],
+    ]);
+  });
+
+  it("ignores the box while the deployment does not offer events", async () => {
+    const { cookie, user } = await signIn("owner@example.com");
+    const off = { ...env, MCP_EVENTS_ENABLED: "" };
+    const ctx = createExecutionContext();
+    const page = await worker.fetch(
+      new Request(`${BASE}/tokens?new=1`, { headers: { cookie } }),
+      off,
+      ctx,
+    );
+    const offHtml = await page.text();
+    // Control: the form is on the page, only the box is not.
+    expect(offHtml).toContain('name="days"');
+    expect(offHtml).not.toContain('name="events"');
+    const created = await worker.fetch(
+      new Request(`${BASE}/tokens`, form({ name: "calendar", days: "30", events: "1" }, cookie)),
+      off,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(created.status).toBe(200);
+    const row = await env.DB.prepare("SELECT scope FROM api_tokens WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ scope: string }>();
+    expect(row?.scope).toBe("read");
   });
 });

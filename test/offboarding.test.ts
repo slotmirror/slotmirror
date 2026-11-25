@@ -32,6 +32,10 @@ import { syncWindow } from "../src/sync/rules";
 import type { RuleOptions } from "../src/config";
 import { BASE, EMPTY_FAKE_SEED, noFakeNetwork, signIn, stopClock } from "./helpers";
 
+/** The texts of the /cleanup page, which the redesigned pages render. */
+const cleanupEn = en.next.auth.cleanup;
+const cleanupDe = de.next.auth.cleanup;
+
 /**
  * The paths of an offboarding, through the real routes, alarms and `client()`. The simulated
  * calendars replace only Graph and Google, so `fetch` is replaced only for the token endpoint.
@@ -1660,8 +1664,9 @@ describe("the activity page", () => {
 
     const page = await exports.default.fetch(`${BASE}/activity`, { headers: { cookie } });
 
+    const text = en.next.describe.activity.detail;
     expect(await page.text()).toContain(
-      "2 blocks removed, 1 block left, the provider refused the tokens, delete the rest by hand",
+      [text.cleanupRemoved(2), text.cleanupLeft(1), text.cleanupReasons.token_refused].join(", "),
     );
   });
 });
@@ -2077,7 +2082,7 @@ describe("a refused token before any count", () => {
       removed: 0,
     });
     expect((await tombstoneOf(targetId))?.blocks_left).toBeNull();
-    expect(await page("/cleanup", cookie)).toContain(en.cleanup.unknownCount);
+    expect(await page("/cleanup", cookie)).toContain(cleanupEn.unknownCount);
   });
 
   it("shows the rest per target calendar, also in the provider path without a mock", async () => {
@@ -2088,13 +2093,13 @@ describe("a refused token before any count", () => {
 
     const window = syncWindow({ daysAhead: 30 } as RuleOptions);
     expect(text).toContain("Cal");
-    expect(text).toContain(en.cleanup.aboutCount(1));
+    expect(text).toContain(cleanupEn.aboutCount(1));
     expect(text).toContain(await ruleTagFor(ruleId));
-    expect(text).toContain(en.cleanup.reasons.token_refused);
-    expect(text).toContain(en.cleanup.reconnectDoesNotHelp);
+    expect(text).toContain(cleanupEn.reasons.token_refused);
+    expect(text).toContain(cleanupEn.reconnectDoesNotHelp);
     const { formatDate } = i18nFor("en");
     expect(text).toContain(
-      en.cleanup.period(
+      cleanupEn.period(
         formatDate(window.start.toISOString()),
         formatDate(window.end.toISOString()),
       ),
@@ -2125,7 +2130,7 @@ describe("a job on a paused account", () => {
     expect(stone?.state).toBe("open");
     const { formatDate } = i18nFor("en");
     expect(await page("/cleanup", (await signIn("owner@example.com")).cookie)).toContain(
-      en.cleanup.running(formatDate(stone?.deadline_at ?? "")),
+      cleanupEn.running(formatDate(stone?.deadline_at ?? "")),
     );
   });
 
@@ -2147,7 +2152,7 @@ describe("a job on a paused account", () => {
     expect((await tombstoneOf(targetId))?.state).toBe("deadline");
     const text = await page("/cleanup", (await signIn("owner@example.com")).cookie);
     expect(text).toContain(await ruleTagFor(ruleId));
-    expect(text).toContain(en.cleanup.reasons.deadline);
+    expect(text).toContain(cleanupEn.reasons.deadline);
   });
 
   it("ends in an alarm too", async () => {
@@ -2712,7 +2717,7 @@ describe("the page of blocks left", () => {
 
     expect(text).not.toContain("Busy");
     expect(text).not.toContain("meeting");
-    expect(text).toContain(en.cleanup.markerOnly(await ruleTagFor(ruleId)));
+    expect(text).toContain(cleanupEn.markerOnly(await ruleTagFor(ruleId)));
   });
 
   it("stores no title of a rule that copies event titles", async () => {
@@ -2733,7 +2738,7 @@ describe("the page of blocks left", () => {
     await post(`/accounts/${targetId}/disconnect`, cookie);
     await runDurableObjectAlarm(target);
     const text = await page("/cleanup", cookie);
-    expect(text).toContain(en.cleanup.empty);
+    expect(text).toContain(cleanupEn.empty);
     expect(text).not.toContain(await ruleTagFor(ruleId));
   });
 
@@ -2790,7 +2795,7 @@ describe("the page of blocks left", () => {
 
     const text = await page("/cleanup", cookie);
 
-    expect(text).toContain(en.cleanup.count(4));
+    expect(text).toContain(cleanupEn.count(4));
     expect(text).toContain(await ruleTagFor(ruleId));
     expect(text).toContain(await ruleTagFor("page-group-rule-2"));
   });
@@ -2805,7 +2810,7 @@ describe("the page of blocks left", () => {
     const text = await exports.default.fetch(`${BASE}/cleanup`, {
       headers: { cookie: `${cookie}; lang=de` },
     });
-    expect(await text.text()).toContain(de.cleanup.reconnectDoesNotHelp);
+    expect(await text.text()).toContain(cleanupDe.reconnectDoesNotHelp);
   });
 });
 
@@ -2845,20 +2850,20 @@ describe("a removal that still runs", () => {
     const home = await page("/", cookie);
     const text = await page("/cleanup", cookie);
 
-    expect(home).not.toContain(en.cleanup.notice(1));
-    expect(home).toContain(en.cleanup.runningNotice(1));
+    expect(home).not.toContain(en.next.overview.problems.cleanupLeftTitle(1));
+    expect(home).toContain(en.next.overview.problems.cleanupRunningTitle(1));
     const { formatDate } = i18nFor("en");
     const stone = await tombstoneOf(targetId);
-    expect(text).toContain(en.cleanup.runningTitle);
-    expect(text).toContain(en.cleanup.running(formatDate(stone?.deadline_at ?? "")));
-    expect(text).not.toContain(en.cleanup.lead);
-    expect(text).not.toContain(en.cleanup.reconnectDoesNotHelp);
+    expect(text).toContain(cleanupEn.runningTitle);
+    expect(text).toContain(cleanupEn.running(formatDate(stone?.deadline_at ?? "")));
+    expect(text).not.toContain(cleanupEn.lead);
+    expect(text).not.toContain(cleanupEn.reconnectDoesNotHelp);
     expect(text).not.toContain(await ruleTagFor(ruleId));
 
     await runDurableObjectAlarm(target);
 
-    expect(await page("/", cookie)).not.toContain(en.cleanup.runningNotice(1));
-    expect(await page("/cleanup", cookie)).toContain(en.cleanup.empty);
+    expect(await page("/", cookie)).not.toContain(en.next.overview.problems.cleanupRunningTitle(1));
+    expect(await page("/cleanup", cookie)).toContain(cleanupEn.empty);
   });
 
   it("stands apart from a rest in the same calendar", async () => {
@@ -2875,11 +2880,11 @@ describe("a removal that still runs", () => {
 
     const text = await page("/cleanup", cookie);
 
-    expect(text).toContain(en.cleanup.lead);
+    expect(text).toContain(cleanupEn.lead);
     expect(text).toContain(await ruleTagFor(ruleId));
-    expect(text).toContain(en.cleanup.runningTitle);
+    expect(text).toContain(cleanupEn.runningTitle);
     expect(text).not.toContain(await ruleTagFor("run-both-rule-2"));
-    expect(await page("/", cookie)).toContain(en.cleanup.notice(1));
+    expect(await page("/", cookie)).toContain(en.next.overview.problems.cleanupLeftTitle(1));
   });
 
   it("is no rest for an admin link", async () => {
@@ -2931,9 +2936,9 @@ describe("a tombstone without a job", () => {
     ]);
     const again = await signIn("ghost-rule@org.example");
     const text = await page("/cleanup", again.cookie);
-    expect(text).toContain(en.cleanup.reasons.not_started);
-    expect(text).toContain(en.cleanup.unknownCount);
-    expect(text).not.toContain(en.cleanup.runningTitle);
+    expect(text).toContain(cleanupEn.reasons.not_started);
+    expect(text).toContain(cleanupEn.unknownCount);
+    expect(text).not.toContain(cleanupEn.runningTitle);
   });
 
   it("stays open for the time a request needs, and is once only in the log", async () => {
@@ -2953,9 +2958,9 @@ describe("a tombstone without a job", () => {
 
     const text = await page("/cleanup", cookie);
 
-    expect(text).toContain(en.cleanup.empty);
-    expect(text).not.toContain(en.cleanup.runningTitle);
-    expect(await page("/", cookie)).not.toContain(en.cleanup.runningNotice(1));
+    expect(text).toContain(cleanupEn.empty);
+    expect(text).not.toContain(cleanupEn.runningTitle);
+    expect(await page("/", cookie)).not.toContain(en.next.overview.problems.cleanupRunningTitle(1));
   });
 
   it("of a rule that runs closes without asking for anything", async () => {
@@ -2981,9 +2986,9 @@ describe("a tombstone without a job", () => {
     ]);
     const again = await signIn(email);
     const activity = await page("/activity", again.cookie);
-    expect(activity).toContain(en.activity.cleanupReasons.kept);
-    expect(activity).not.toContain(en.activity.cleanupReasons.not_started);
-    expect(await page("/cleanup", again.cookie)).toContain(en.cleanup.empty);
+    expect(activity).toContain(en.next.describe.activity.detail.cleanupReasons.kept);
+    expect(activity).not.toContain(en.next.describe.activity.detail.cleanupReasons.not_started);
+    expect(await page("/cleanup", again.cookie)).toContain(cleanupEn.empty);
   });
 
   it("gets the full time again from a new request that fails", async () => {
@@ -3055,8 +3060,10 @@ describe("a tombstone without a job", () => {
     expect(await tombstoneOf(targetId)).toBeNull();
     expect(await eventsOf(targetId, "cleanup_finished")).toEqual([]);
     const again = await signIn(email);
-    expect(await page("/cleanup", again.cookie)).toContain(en.cleanup.empty);
-    expect(await page("/", again.cookie)).not.toContain(en.cleanup.notice(1));
+    expect(await page("/cleanup", again.cookie)).toContain(cleanupEn.empty);
+    expect(await page("/", again.cookie)).not.toContain(
+      en.next.overview.problems.cleanupLeftTitle(1),
+    );
   });
 
   it("of a rule that was paused and then deleted goes too", async () => {
@@ -3086,7 +3093,7 @@ describe("a tombstone without a job", () => {
     expect(await tombstoneOf(targetId)).toBeNull();
     expect(await eventsOf(targetId, "cleanup_finished")).toEqual([]);
     const again = await signIn(email);
-    expect(await page("/cleanup", again.cookie)).toContain(en.cleanup.empty);
+    expect(await page("/cleanup", again.cookie)).toContain(cleanupEn.empty);
   });
 
   it("of a rule that a request still holds closes with a doubt", async () => {
@@ -3133,26 +3140,24 @@ describe("a tombstone without a job", () => {
     const { cookie } = await signIn("ghost-unknown@org.example");
     const text = await page("/cleanup", cookie);
     expect(text).toContain("The state of this removal is not known");
-    expect(text).toContain("Blocks may be left");
-    expect(text).toContain("Connecting the account again can still finish the removal");
+    expect(text).toContain("Copies may be left");
+    expect(text).toContain("Reconnecting the calendar can still finish the removal");
     expect(text).toContain("Otherwise delete them by hand");
     expect(text).not.toContain("could not start");
-    expect(text).not.toContain("slotmirror could not remove these blocks");
-    expect(text).not.toContain("Connecting the account again does not remove them.");
+    expect(text).not.toContain("slotmirror could not remove these copies");
+    expect(text).not.toContain("Reconnecting the calendar does not remove them.");
 
     const activity = await page("/activity", cookie);
-    expect(activity).toContain(en.activity.cleanupReasons.not_started);
+    expect(activity).toContain(en.next.describe.activity.detail.cleanupReasons.not_started);
     expect(activity).not.toContain("could not start");
 
-    const reason = de.cleanup.reasons.not_started;
+    const reason = cleanupDe.reasons.not_started;
     expect(reason).toContain("Der Stand dieser Entfernung ist nicht bekannt");
-    expect(reason).toContain("können Blöcke übrig sein");
-    expect(reason).toContain("kann die Entfernung noch abschließen");
+    expect(reason).toContain("können Kopien übrig sein");
+    expect(reason).toContain("kann das die Entfernung noch abschließen");
     expect(reason).toContain("Sonst lösche sie von Hand");
-    expect(de.cleanup.lead).not.toContain("konnte diese Blöcke nicht entfernen");
-    expect(de.cleanup.reconnectDoesNotHelp).not.toBe(
-      "Ein erneutes Verbinden des Kontos entfernt sie nicht.",
-    );
+    expect(cleanupDe.lead).not.toContain("konnte diese Kopien nicht entfernen");
+    expect(cleanupDe.reconnectDoesNotHelp).toContain("nur entfernt, wenn der Eintrag das nennt");
     expect(de.activity.cleanupReasons.not_started).not.toContain("konnte nicht starten");
   });
 });
@@ -3186,7 +3191,7 @@ describe("a tombstone with a job", () => {
 
     expect(await rowExists("rules", ruleId)).toBe(false);
     expect(await tombstoneOf(targetId)).toMatchObject({ state: "open", deadline_at: deadline });
-    expect(await page("/cleanup", cookie)).toContain(en.cleanup.runningTitle);
+    expect(await page("/cleanup", cookie)).toContain(cleanupEn.runningTitle);
 
     await runDurableObjectAlarm(target);
 
@@ -3226,8 +3231,8 @@ describe("a tombstone with a job", () => {
     expect((await tombstoneOf(targetId))?.state).toBe("open");
     expect(await eventsOf(targetId, "cleanup_finished")).toEqual([]);
     const text = await page("/cleanup", (await signIn(email)).cookie);
-    expect(text).toContain(en.cleanup.runningTitle);
-    expect(text).not.toContain(en.cleanup.running(i18nFor("en").formatDate(deadline)));
+    expect(text).toContain(cleanupEn.runningTitle);
+    expect(text).not.toContain(cleanupEn.running(i18nFor("en").formatDate(deadline)));
 
     await runDurableObjectAlarm(target);
 
@@ -3257,8 +3262,8 @@ describe("a tombstone with a job", () => {
     expect((await tombstoneOf(targetId))?.state).toBe("open");
     expect(await removalsOf(target)).toHaveLength(1);
     const text = await page("/cleanup", (await signIn(email)).cookie);
-    expect(text).not.toContain(en.cleanup.reasons.not_started);
-    expect(text).toContain(en.cleanup.runningTitle);
+    expect(text).not.toContain(cleanupEn.reasons.not_started);
+    expect(text).toContain(cleanupEn.runningTitle);
 
     advance(CLEANUP_DEADLINE_MS - DAY - closes);
     await target.tick();
@@ -3394,8 +3399,8 @@ describe("the estimate of a job that cannot read", () => {
       removed: 0,
     });
     const text = await page("/cleanup", (await signIn(email)).cookie);
-    expect(text).not.toContain(en.cleanup.aboutCount(1));
-    expect(text).toContain(en.cleanup.unknownCount);
+    expect(text).not.toContain(cleanupEn.aboutCount(1));
+    expect(text).toContain(cleanupEn.unknownCount);
   });
 
   it("still uses the last run of a rule that another request holds", async () => {
@@ -3677,8 +3682,17 @@ describe("the sweep and a newer request", () => {
 
     expect(await ruleEnabled(ruleId)).toBe(1);
     expect(await holdsOf(ruleId)).toBe(0);
+    // The row names the level the rule runs at again and its source, ids and levels only.
     expect(await eventsOf(targetId, "rule_enabled")).toEqual([
-      expect.objectContaining({ detail: { restored: true } }),
+      expect.objectContaining({
+        detail: {
+          restored: true,
+          choice: "busy",
+          markPrivate: true,
+          previousChoice: "off",
+          fromAccount: "fresh-end-a",
+        },
+      }),
     ]);
   });
 });

@@ -27,6 +27,8 @@ import {
   type SourceEvent,
   type SyncAction,
 } from "../sync/types";
+import { parseEach } from "../schema-issues";
+import { outlookCategoryName } from "../sync/category-values";
 import type {
   CalendarClient,
   CalendarInfo,
@@ -51,17 +53,14 @@ export const GRAPH_BATCH_LIMIT = 20;
 /** Page size for calendarView. Fewer pages mean fewer subrequests on the Free plan. */
 const PAGE_SIZE = 500;
 
-const calendarsSchema = z.object({
-  value: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      canEdit: z.optional(z.boolean()),
-      isDefaultCalendar: z.optional(z.boolean()),
-      owner: z.optional(z.object({ address: z.optional(z.nullable(z.string())) })),
-    }),
-  ),
-  "@odata.nextLink": z.optional(z.string()),
+/** One calendar of `/me/calendars`. Each is parsed on its own; see `parseEach`. */
+const calendarSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  canEdit: z.optional(z.boolean()),
+  isDefaultCalendar: z.optional(z.boolean()),
+  // Graph sends "owner": null for some shared and group calendars.
+  owner: z.optional(z.nullable(z.object({ address: z.optional(z.nullable(z.string())) }))),
 });
 
 const meSchema = z.object({
@@ -147,16 +146,20 @@ export class GraphCalendar implements CalendarClient {
   ) {}
 
   async listCalendars(): Promise<CalendarInfo[]> {
-    const [me, body] = await Promise.all([
-      this.get(`${GRAPH}/me?$select=mail,userPrincipalName`),
-      this.get(`${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`),
-    ]);
-    const profile = meSchema.parse(me);
+    const profile = meSchema.parse(await this.get(`${GRAPH}/me?$select=mail,userPrincipalName`));
     const own = new Set(
       [profile.mail, profile.userPrincipalName].filter(Boolean).map((a) => String(a).toLowerCase()),
     );
-    const page = calendarsSchema.parse(body);
-    return page.value.map((calendar) => ({
+    // A mailbox with many shared calendars has more than one page.
+    const items: unknown[] = [];
+    let url: string | undefined =
+      `${GRAPH}/me/calendars?$select=id,name,canEdit,isDefaultCalendar,owner&$top=100`;
+    while (url) {
+      const page = pageSchema.parse(await this.get(url));
+      items.push(...page.value);
+      url = page["@odata.nextLink"];
+    }
+    return parseEach(items, calendarSchema, "calendar").map((calendar) => ({
       id: calendar.id,
       name: calendar.name,
       canEdit: calendar.canEdit ?? false,
@@ -498,6 +501,23 @@ function retryAfterHeader(headers: Record<string, string> | undefined): string |
 }
 
 /**
+ * The Outlook categories of a block: the block colour, then the passed categories, each once
+ * (compared without case). A passed value that Outlook cannot take is dropped, so that a wrong
+ * stored rule never fails the write.
+ */
+function graphCategories(block: DesiredBlock): string[] {
+  const names = block.color ? [block.color] : [];
+  const seen = new Set(names.map((name) => name.toLowerCase()));
+  for (const value of block.categories ?? []) {
+    const name = outlookCategoryName(value);
+    if (name === null || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    names.push(name);
+  }
+  return names;
+}
+
+/**
  * Graph event body for a block. No attendees, so that no invitations are sent. An all-day block
  * needs `allDayZone`: Graph keeps the instant of the write, so a block in another zone than the
  * mailbox lies beside the local day. A read under UTC returns the same dates for each zone.
@@ -519,7 +539,7 @@ export function toGraphBlock(block: DesiredBlock, ruleTag: string, allDayZone = 
     location: { displayName: block.location },
     body: { contentType: "text", content: block.body },
     // Always set, so that an update also removes a category the rule no longer uses.
-    categories: block.color ? [block.color] : [],
+    categories: graphCategories(block),
     singleValueExtendedProperties: [
       { id: MARKER_PROPERTY_ID, value: markerValueFor(ruleTag, block) },
       { id: DEDUP_PROPERTY_ID, value: block.dedupKey },

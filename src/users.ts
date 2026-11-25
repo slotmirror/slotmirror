@@ -6,17 +6,24 @@ import {
   type AccessPolicy,
   type Role,
 } from "./access";
-import { errorLogFields, recordAudit } from "./audit";
+import { recordAudit } from "./audit";
+import { parseMcpForMembers, type McpForMembers } from "./permissions";
 import type { Identity } from "./providers/oauth-token";
+import { log } from "./telemetry";
 
 export interface CurrentUser {
   id: string;
   orgId: string;
   email: string;
   role: Role;
+  /** The MCP setting of the org, loaded with the user for `can`. */
+  mcpForMembers: McpForMembers;
 }
 
 export type SignedInUser = CurrentUser & { sessionVersion: number };
+
+/** The user that a sign-in wrote, for the session cookie. Requests load the full user. */
+export type SessionUser = Omit<SignedInUser, "mcpForMembers">;
 
 /**
  * Why a sign-in was refused:
@@ -26,7 +33,7 @@ export type SignedInUser = CurrentUser & { sessionVersion: number };
  */
 export type SignInRefusal = "policy" | "identity" | "provider";
 
-export type SignInOutcome = { user: SignedInUser } | { refused: SignInRefusal };
+export type SignInOutcome = { user: SessionUser } | { refused: SignInRefusal };
 
 /** The tenant of personal Microsoft accounts. */
 export const CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad";
@@ -165,7 +172,7 @@ export async function admitSignIn(
     if (String(error).includes("UNIQUE")) return { refused: "identity" };
     throw error;
   }
-  const user = written?.results[0] as SignedInUser | undefined;
+  const user = written?.results[0] as SessionUser | undefined;
   return user ? { user } : { refused: "identity" };
 }
 
@@ -328,26 +335,39 @@ export async function loadUser(
   sessionVersion = 0,
 ): Promise<SignedInUser | null> {
   const row = await env.DB.prepare(
-    `SELECT u.id, u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy
+    `SELECT u.id, u.org_id AS orgId, u.email, u.tenant_id AS tenantId, o.policy,
+            o.mcp_for_members AS mcpForMembers
      FROM users u JOIN orgs o ON o.id = u.org_id
      WHERE u.id = ? AND u.session_version = ?`,
   )
     .bind(userId, sessionVersion)
-    .first<{ id: string; orgId: string; email: string; tenantId: string | null; policy: string }>();
+    .first<AdmissionRow>();
   if (!row) return null;
   const user = admittedUser(env, row);
   return user && { ...user, sessionVersion };
 }
 
+interface AdmissionRow {
+  id: string;
+  orgId: string;
+  email: string;
+  tenantId: string | null;
+  policy: string;
+  mcpForMembers: unknown;
+}
+
 /** The user if the org policy still admits them, otherwise null. See `orgPolicy`. */
-export function admittedUser(
-  env: Env,
-  row: { id: string; orgId: string; email: string; tenantId: string | null; policy: string },
-): CurrentUser | null {
+export function admittedUser(env: Env, row: AdmissionRow): CurrentUser | null {
   const policy = orgPolicy(env, row.orgId, row.policy);
   const decision = decideAccess(policy, { email: row.email, tenantId: row.tenantId });
   if (!decision.allowed) return null;
-  return { id: row.id, orgId: row.orgId, email: row.email, role: decision.role };
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    email: row.email,
+    role: decision.role,
+    mcpForMembers: parseMcpForMembers(row.mcpForMembers),
+  };
 }
 
 /** The default org follows the variables; other orgs (hosted mode) follow their stored policy. */
@@ -382,11 +402,7 @@ export function ownerAdmission(env: Env): (owner: OwnerColumns) => boolean {
       try {
         policy = orgPolicy(env, owner.ownerOrgId, owner.ownerPolicy);
       } catch (error) {
-        console.error(
-          "Stored access policy is invalid",
-          owner.ownerOrgId,
-          ...errorLogFields(error),
-        );
+        log.error("access.policy_invalid", { orgId: owner.ownerOrgId }, error);
       }
       policies.set(owner.ownerOrgId, policy);
     }

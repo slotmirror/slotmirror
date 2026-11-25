@@ -8,7 +8,8 @@ service between your calendars and your deployment.
 
 ## What is stored
 
-- The email address of each user and, for Microsoft accounts, the tenant ID and object ID.
+- The email address of each user and the account they signed in with: the tenant ID and object
+  ID at Microsoft, the subject ID at Google.
 - OAuth tokens for each connected account, encrypted with AES-256-GCM. The key is the secret
   `TOKEN_ENCRYPTION_KEY`.
 - The names of the calendars and the rules.
@@ -17,7 +18,7 @@ service between your calendars and your deployment.
 - A session cookie and a language cookie in the browser. While a user signs in to connect an app,
   a cookie holds that app's request for 10 minutes.
 - For API tokens, if the [MCP server](/docs/mcp/) is on: a hash of each token, its last four
-  characters, its name, and when it was last used. One row per user counts the tool calls and the
+  characters, its name, whether it may read events, and when it was last used. One row per user counts the tool calls and the
   database rows they read, for the day of the user's last call.
 - For apps connected with OAuth: the name and redirect addresses that each app registered, a hash of
   a confidential app's secret, and for each connection the hash of its refresh token, when it was
@@ -28,7 +29,12 @@ service between your calendars and your deployment.
 
 Event titles, descriptions, locations and attendees are read during a sync and kept only in
 memory. They are not written to D1 or to Durable Object storage. Blocks in a target
-calendar contain only what the detail level of the rule allows. The default is "Busy".
+calendar contain only what the level of the mirroring allows (**What is copied**). The default is "Busy".
+
+If the operator sets `MCP_EVENTS_ENABLED=1` and a user allows a token or app to read events, the
+MCP tool [`list_events`](/docs/mcp/#calendar-events) reads titles, times and locations in the same
+way and sends them to that agent. slotmirror stores none of it. The agent and its model provider
+then hold what they received, under their own terms.
 
 ## Where data is processed
 
@@ -71,70 +77,7 @@ ends.
 Each deployment has a `/privacy` page. It shows `PRIVACY_CONTACT` as the contact of the operator.
 Google requires this page for a published OAuth app.
 
-## Waitlist of the hosted version
+## This website and the waitlist
 
-The home page can show a form for the waitlist of a hosted version that does not exist yet.
-Joining the list is not a purchase. The form appears only if the site was built with a waitlist
-address and a Turnstile site key. Without both, the page shows no form and loads nothing for it.
-
-- **What is stored.** The email address (trimmed, lowercase), the place of the sign-up (for example
-  `website-home`), the time of the sign-up, the time of the last confirmation mail, the time of the
-  confirmation, and the expiry times of two links. The two link tokens are stored only as hashes.
-  Nothing else is stored: no name, no IP address, no user agent.
-- **Double opt-in.** After the sign-up the Worker sends one mail with a confirm link and an
-  unsubscribe link. The address counts only after the person confirms. Opening a link changes
-  nothing. A button on the page sends the confirmation or the unsubscription. The Worker sends no
-  other mail.
-- **Deadlines.** The confirm link works for 7 days. A daily cleanup deletes unconfirmed entries
-  after that time, so an entry can stay for up to 8 days. Confirmed entries stay until
-  31 March 2027 and are deleted by the first cleanup after that date. The unsubscribe link works
-  for 365 days.
-- **Deletion.** Every mail has an unsubscribe link. It deletes the whole entry at once. The mail
-  header also offers one-click unsubscribe. If the link has expired, a person can ask the operator
-  to delete the entry. The page names the contact for this.
-- **Protection against abuse.** Every sign-up needs a Cloudflare Turnstile check. The browser loads
-  the Turnstile script from `challenges.cloudflare.com` only when the form comes into view. The
-  Worker sends the Turnstile answer and the IP address of the visitor to Cloudflare to verify it.
-  A daily limit of mails applies to all sign-ups together.
-- **IP hash.** To limit sign-ups per network, the Worker counts attempts per hour and per day. It
-  stores a hash of the IP address, built with a secret key, and not the address. For IPv6 the hash
-  covers the /64 network. The counter rows are deleted by the daily cleanup once they are older
-  than 24 hours. Because the cleanup runs once a day, a row stays for up to 48 hours.
-  The daily mail limit uses rows of only a date and a counter. They are deleted after 30 days.
-- **Processors.** Cloudflare (Workers and D1 database; the database is created in the EU
-  jurisdiction), Cloudflare Turnstile, and Resend, which sends the mail (sending region: EU).
-- **Logs.** The Worker logs no address and no token. The invocation logs of the Worker are off,
-  because the confirm and unsubscribe links carry a token in the URL.
-- **Browser requests.** The browser posts the form straight to the waitlist Worker on
-  `slotmirror.app`. The request does not go through the statistics proxy. The confirm and
-  unsubscribe pages load no script and send nothing to PostHog.
-
-## This website
-
-The website slotmirror.com and its documentation use PostHog (EU Cloud, Frankfurt) for
-privacy-friendly statistics. It replaces Cloudflare Web Analytics.
-
-- PostHog runs in cookieless mode. It sets no cookie and stores nothing in the browser for
-  statistics. A visitor gets no persistent ID. PostHog builds a hash from IP address, user agent
-  and a daily salt, and the hash changes every day.
-- The site records page views (`$pageview`) and these events: `deploy_click`, a click on a "Deploy
-  to Cloudflare" button or link, `quickstart_click`, a click on the main button of the home page,
-  which opens the quickstart, and `waitlist_submit`, sent when the waitlist form sends a
-  sign-up (see below). `waitlist_submit` is sent only on pages that show the form. It carries the page path and
-  nothing else: no email address, no token and no answer of the server.
-- There is no autocapture, no session replay, no survey and no feature flag. URLs are sent
-  without query string and fragment.
-- Only the website is measured. A slotmirror deployment that you run sends nothing to PostHog.
-- The browser talks to the own domain. A Cloudflare Worker forwards the requests to PostHog. The
-  Worker passes on the client IP address: it sends the value of `CF-Connecting-IP` to PostHog as
-  `X-Forwarded-For` with every event. PostHog needs the IP address for the daily hash, and without
-  it all visitors would look like one visitor. Under `/ingest` the Worker accepts only the event
-  path (`POST /ingest/e/`) and answers every other request with 404. It forwards only the headers
-  `Content-Type`, `Content-Encoding` and `User-Agent`, plus `X-Forwarded-For`. It drops all other
-  headers, including cookies and authorisation headers, and stores nothing. The Worker does not
-  remove the IP address. The PostHog project setting "Discard client IP data" removes it after
-  PostHog has built the hash.
-- The browser also keeps the theme choice in local storage. It is not used for tracking.
-
-Controller: [operator name and address, to be added before launch]. Contact:
-[privacy contact, to be added before launch].
+The statistics of slotmirror.com and the waitlist of the hosted version are described in the
+[privacy notice](/privacy/) of the website. They do not concern a deployment that you run.

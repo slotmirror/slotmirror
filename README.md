@@ -12,13 +12,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/michaeljauk/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml"><img src="https://github.com/slotmirror/slotmirror/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="760" alt="The Rules page: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+  <img src="docs/images/demo.gif" width="760" alt="On the Mirroring page, the mirroring from Work to Personal changes to Everything and gets a Google colour, then the change is saved">
 </p>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
@@ -35,40 +35,41 @@ connect an account.
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
 
-![The Rules page: one card per calendar, and an overview of all directions](docs/images/editor.png)
+![The Mirroring page: every direction grouped by the calendar it appears in, with the panel of one mirroring open](docs/images/editor.png)
 
 ## What it does
 
-- **One group for the common case.** Put your calendars in the block group, and each sees the
-  others only as "Busy", marked private.
-- **More detail where you want it.** Per calendar and target you choose: not at all, as busy,
-  with title, or everything. An example event shows the result before you save.
+- **One step for the common case.** Choose **Mirror all as busy** on the **Mirroring** page, and
+  each calendar shows the others only as busy, by default as a private event.
+- **More detail where you want it.** Per mirroring you choose what is copied: not copied, busy
+  only, title, or everything. You also choose what others see: a private event, or the same as
+  you. A preview shows the result before you save.
 - **Working hours.** Each account can have working hours: chosen weekdays and a time range, for
-  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the account settings. Per
-  calendar and target you can then mirror only the events inside the working hours of the target
-  account. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
+  example Monday to Friday, 08:00 to 18:00, Europe/Vienna. You set them in the calendar's panel on the **Calendars** page. Per
+  mirroring you can then copy only the events inside the working hours of the target
+  calendar. An event is mirrored if it overlaps the range on one chosen day. Its block keeps the
   event's real times; it is never cut to the range. An all-day event counts if one of its dates is a
   chosen weekday. The end must be after the start; "until midnight" ends the range at the end of the
   day, and a range over midnight is not possible. An account has no working hours until you set
   them; the time zone field starts with the browser's zone, or the deployment's `TIME_ZONE` without
-  JavaScript. Turning them on or off does not change whether a direction in the block group is an
-  exception; the reset turns them off. On the two days a year when clocks change, a range that spans
+  JavaScript. On the two days a year when clocks change, a range that spans
   the change is one hour shorter or longer in real time. A start or end in the skipped hour moves
   forward by an hour; one in the repeated hour means its first occurrence, for the start and the end
   alike. A range that ends at 02:30 on the night clocks go back therefore ends an hour before the
   second 02:30.
-- **A colour for the blocks.** Per calendar and target you can colour the blocks: a Google event
-  colour, or an Outlook category. Outlook shows the category's colour if the category exists in
+- **A colour for the copies.** Per mirroring you can colour the copies, under **Look of the
+  copies**: a Google event colour, or an Outlook category. Outlook shows the category's colour if the category exists in
   that mailbox; create it in Outlook first.
-- **A buffer around the blocks.** Per source calendar account, blocks can start up to 240 minutes
-  earlier and end up to 240 minutes later than the event, for example for travel time. The buffer
-  applies to every target of that account. The account keeps it while it has no targets, and new
-  directions and group rules from it take it. The default is 0. All-day events get no buffer. Where
+- **A buffer around the blocks.** Per source calendar, blocks can start up to 240 minutes
+  earlier and end up to 240 minutes later than the event, for example for travel time. You set
+  **Buffer before** and **Buffer after** in the calendar's panel on the **Calendars** page. The
+  buffer applies to every target of that calendar. The calendar keeps it while it has no targets,
+  and new mirrorings from it take it. The default is 0. All-day events get no buffer. Where
   buffered blocks overlap, each event keeps its own block. If one event reaches a calendar through
   two directions with the same buffer, it gets one block. With different buffers it can get two, so
   that the wider buffer is never lost.
-- **A colour per account.** Each account gets its own colour in the pages, automatically or
-  chosen under "Settings". It does not change any calendar.
+- **A colour per calendar.** Each calendar gets its own colour in the pages, automatically or
+  chosen in its panel on the **Calendars** page (**Colour**). It does not change any calendar.
 - **Several calendars per account.** Next to the main calendar you can add others, such as a
   subscribed team schedule. Targets are always the main calendars.
 - **Changes arrive by push.** Microsoft and Google notify your deployment when a calendar
@@ -90,7 +91,7 @@ a Cloudflare account (the free plan is enough), an account at one provider (Micr
 Google) with the right to create an OAuth app, and a way to generate two random secrets. The order
 is: deploy, read the address of your Worker, create the OAuth app, set the secrets.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/michaeljauk/slotmirror)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/slotmirror/slotmirror)
 
 Before you click, read the quickstart: the button asks for `SESSION_SECRET` and
 `TOKEN_ENCRYPTION_KEY`, and the quickstart shows how to generate them. Leave the provider fields
@@ -116,11 +117,26 @@ above. The code of the waitlist Worker is in
 
 ## Screens
 
-| Accounts                                        | Settings for all calendars                 |
-| ----------------------------------------------- | ------------------------------------------ |
-| ![Connected accounts](docs/images/accounts.png) | ![Sync settings](docs/images/settings.png) |
+| Calendars                                        | Settings for all mirrorings                              |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| ![Connected calendars](docs/images/accounts.png) | ![Settings for all mirrorings](docs/images/settings.png) |
 
-![A source card with several calendars of one account](docs/images/source-calendars.png)
+![The panel of one account with several calendars to copy from](docs/images/source-calendars.png)
+
+## UI changed
+
+This release replaces the interface. The Overview is the start page, and Mirroring, Calendars,
+Activity, API tokens and Admin are pages of their own, with a command palette (`Ctrl+K` or
+`Cmd+K`) and a panel for details.
+
+- The pages have short addresses: `/` (Overview), `/mirroring`, `/calendars`, `/activity`,
+  `/tokens` and `/admin`. The page `/tokens` exists only when `MCP_ENABLED=1`. The preview addresses below `/next` answer with a permanent redirect to
+  the same page for one release. Update bookmarks.
+- `/rules` redirects to `/mirroring`.
+- Nothing else moves. The sign-in, the OAuth flow, the MCP endpoint, the webhooks and the form
+  endpoints keep their addresses. Old form endpoints below `/next` keep working for one release.
+- The interface needs no database migration of its own. To go back, deploy the previous release
+  again.
 
 ## Settings
 
@@ -197,7 +213,7 @@ tokens are deleted, or expires within days; its notifications are ignored. The a
 If the provider keeps failing or refuses the tokens, the removal tries again after 1 minute,
 10 minutes, 2 hours and 12 hours. After the fifth failed attempt, the tokens are deleted and the
 remaining blocks stay. A removal in a paused account that stays waits 14 days for a reconnect, and
-then ends. The page **Blocks left in calendars** then lists each calendar with the block count, the
+then ends. The page **Copies left in calendars** then lists each calendar with the block count, the
 period and the marker, without event contents. After a removal ended, a later reconnect does not remove these blocks. If the page says that the
 state is unknown, a removal may still be waiting, and a reconnect can finish it.
 If a removal cannot be queued at all, the account and its rules stay and the request reports an
@@ -229,7 +245,10 @@ pnpm wrangler d1 execute DB --remote --command "UPDATE users SET refused_subject
 ## MCP server
 
 slotmirror has an optional, read-only MCP server at `/mcp`. Agents can read accounts, rules, and the
-state of the last sync run. It reads no calendars and shows no event content. Set `MCP_ENABLED=1`.
+state of the last sync run. By default it reads no calendars and shows no event content. Set `MCP_ENABLED=1`.
+With `MCP_EVENTS_ENABLED=1` as well, a user can allow a token or app to call `list_events`: their
+events across all source calendars, with private events reduced to their times and slotmirror's
+own blocks left out.
 Clients such as Claude connect with your sign-in over OAuth; scripts use a personal token from
 **API tokens**. Tokens and connections last at most 90 days. See the
 [MCP documentation](https://slotmirror.com/docs/mcp/).
@@ -257,9 +276,9 @@ A provider can refuse an account's refresh token for good. Examples: the user re
 admin ended the sessions, or Google's testing mode ended the token after 7 days. slotmirror then
 marks the account and stops its work until the user connects it again:
 
-- The accounts page shows a notice at the top. It names the account's address and provider and
+- The Calendars page shows a notice. It names the account's address and provider and
   has a **Reconnect** button. The button starts the provider's sign-in with that address
-  preselected. The account's row shows the same state, and the Rules page shows the notice too.
+  preselected. The Mirroring page shows the notice too.
 - The admin page lists which users have accounts that need reconnecting, without the addresses.
 - The activity log records "Token refresh failed", with the provider's error code.
 - The account asks the provider nothing more. Rules into its calendars pause, and rules that read
@@ -299,7 +318,20 @@ marks the check as up again, so an alert does not stay visible in the check.
 "observability": { "enabled": true, "logs": { "invocation_logs": false } }
 ```
 
-`console` output is a separate kind of log and stays in Workers Logs. An invocation log records the
+Each log line of slotmirror is a JSON object, which Workers Logs indexes as fields:
+
+- `event`: a stable name such as `calendars.list_failed`. Filter by it.
+- `level`: `error`, `warn` or `info`.
+- `requestId`: one ID per HTTP request, cron run and Durable Object alarm. A call into an
+  account's Durable Object keeps the ID of its caller, so one filter on `requestId` shows the lines
+  of the Worker and of the Durable Object together. Work that two requests share, such as a rule
+  run that a click joins while an alarm runs it, logs under the ID of the request that started it.
+- `accountId`, `ruleId` and other IDs, if the line has them.
+- `error`: the error's name, a code, the message if it cannot hold user data, and the stack frames.
+
+A log line holds IDs, codes and times, never event titles, calendar names, addresses or tokens.
+
+This output is a separate kind of log and stays in Workers Logs. An invocation log records the
 URL of a request, so with `invocation_logs` set to `true`, Workers Logs store OAuth parameters in
 your Cloudflare account. A deploy applies this setting from `wrangler.jsonc`, so change it there and
 not in the dashboard.
@@ -381,7 +413,7 @@ pnpm dev
 
 `wrangler dev --var DEV_FAKE_CALENDARS:1 --var DEV_FAKE_LATENCY_MS:80` replaces Graph and Google
 with simulated calendars inside the Durable Objects. Signed in as an admin, `POST /dev/seed?accounts=10&events=200`
-creates ten accounts in the block group, `POST /dev/cycle` starts a sync cycle, and `GET /dev/stats`
+creates ten accounts that mirror each other as busy, `POST /dev/cycle` starts a sync cycle, and `GET /dev/stats`
 counts runs, writes and provider calls. Without the variable the `/dev` routes do not exist.
 
 ### Architecture
@@ -433,4 +465,13 @@ Built by [Michael Jauk](https://github.com/michaeljauk). If this saves you time,
 
 ## License
 
-[MIT](./LICENSE) © Michael Jauk
+slotmirror is licensed under the [GNU Affero General Public License v3.0](./LICENSE)
+(`AGPL-3.0-only`). See the [FAQ](https://slotmirror.com/docs/faq/) for what that means in plain words.
+
+Code up to and including commit `fde4b24` stays available under the MIT license. Its text and
+copyright line are in the
+[LICENSE file at that commit](https://github.com/slotmirror/slotmirror/blob/fde4b24b2ee3cf4e9c57d8c7fd308f54c29a634a/LICENSE).
+Later changes are under AGPL-3.0 only.
+
+Contributions need a signed [Contributor License Agreement](./CLA.md). The CLA bot posts the
+signing link on your pull request.

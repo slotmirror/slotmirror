@@ -80,10 +80,10 @@ blocks of those rules from today on. Past blocks stay as a record. Some blocks c
   hour, with the reason. If the rule runs again, it keeps its blocks, and no entry appears. Repeat
   the request to start the removal.
 
-The page **Blocks left in calendars** at `/cleanup` lists these blocks per target calendar. It shows
+The page **Copies left in calendars** at `/cleanup` lists these blocks per target calendar. It shows
 the calendar name, the block count, the period and the marker. It shows no event content. A removal
 that still runs is listed apart, and you need not act on it. A removal in an account that works
-has no end date, because the provider decides how fast it runs. The home page links to it. Admins see the blocks of deleted users on the same page, linked
+has no end date, because the provider decides how fast it runs. The Overview links to it from the notice "Copies left in … calendars". Admins see the blocks of deleted users on the same page, linked
 from the admin page. An entry stays for 90 days.
 
 A count with "about" comes from the last sync run, because no read was possible. If no run left a

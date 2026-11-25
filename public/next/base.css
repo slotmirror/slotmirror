@@ -1,0 +1,3164 @@
+/*
+ * slotmirror redesign, "Graphite". Foundation for the pages under /next.
+ *
+ * This file stands alone: the new shell does not load /style.css. Page stylesheets
+ * (overview.css, mirroring.css, calendars.css) add only what their page needs and use these
+ * tokens and classes.
+ *
+ * Contents
+ *   1  Tokens and themes
+ *   2  Reset and type
+ *   3  App shell: sidebar, frame, page header, content, detail panel, phone layout
+ *   4  List: group, row, row parts
+ *   5  Status dot, tag (identity marks: src/pages/next/identity.tsx)
+ *   6  Detail panel: meta line, sections, property grid, save bar
+ *   7  Controls: button, segmented, switch, input, select
+ *   8  Notice, popover menu, empty state
+ *   9  Motion and view transitions
+ *
+ * Class API (see src/pages/next/components.tsx for the JSX that emits them)
+ *   .app .skip .sidebar .brand .nav .nav-item .nav-group .nav-secondary .user-button .avatar
+ *   .frame .frame.has-panel .workspace .pane .page-head .page-head-inner .page-title .page-lead
+ *   .page-actions .page-scroll .content .detail .detail-head .detail-title .detail-close
+ *   .detail-back .detail-form .detail-body .detail-foot
+ *   .list .list-group .list-group-head .list-group-hint .list-row .row-icon .row-main .row-title
+ *   .row-meta .row-tags .row-count .row-status (selected row: aria-current="true" or .is-selected)
+ *   .cal-swatch .pglyph .lmark .dot .dot-ok|warn|danger|idle .tag .run
+ *   .detail-meta .section .section-title .props .prop .prop-label .prop-control .prop-hint
+ *   .savebar .savebar-row .savebar-text
+ *   .btn .btn-primary|secondary|ghost|danger .btn-icon .seg .seg-item .seg.is-tiles .choice
+ *   .swatches .swatch .swatch-dot .switch .input .select
+ *   .notice .notice-info|warn|danger .menu .menu-head .menu-row .menu-item .menu-sep .empty
+ *   .sr-only .num .muted .row-flow
+ */
+
+/* 1  Tokens and themes ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "Inter Variable";
+  src: url("/next/fonts/inter-4.001.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --chrome: light-dark(oklch(96.5% 0.004 255), oklch(16% 0.006 255));
+  --surface: light-dark(oklch(100% 0 0), oklch(20.5% 0.006 255));
+  --surface-raised: light-dark(oklch(100% 0 0), oklch(25% 0.007 255));
+  /* Hover in dark sits between the surface (20.5%) and the raised surface (25%), so that a hovered
+     row never reads as a popover. */
+  --fill-hover: light-dark(oklch(96% 0.004 255), oklch(23.5% 0.007 255));
+  --fill-selected: light-dark(oklch(94% 0.02 258), oklch(30% 0.04 258));
+  --line: light-dark(oklch(91% 0.004 255), oklch(28% 0.006 255));
+  --line-strong: light-dark(oklch(84% 0.006 255), oklch(36% 0.008 255));
+  --text: light-dark(oklch(22% 0.01 255), oklch(94% 0.004 255));
+  --text-2: light-dark(oklch(45% 0.01 255), oklch(72% 0.008 255));
+  /*
+   * Meta text. A lightness of 58% in both themes reaches only 4.3:1 on white and 3.2:1 on the
+   * selected fill in dark mode, so it is lower in light and higher in dark, to keep 4.5:1 on
+   * surface, hover and selected fills.
+   */
+  --text-3: light-dark(oklch(52% 0.01 255), oklch(68% 0.008 255));
+  --accent: light-dark(oklch(54% 0.19 258), oklch(70% 0.15 258));
+  --on-accent: light-dark(white, oklch(18% 0.02 258));
+  --ok: light-dark(oklch(60% 0.14 155), oklch(72% 0.15 155));
+  --warn: light-dark(oklch(62% 0.14 70), oklch(78% 0.14 75));
+  --danger: light-dark(oklch(56% 0.2 25), oklch(70% 0.17 25));
+
+  /*
+   * Controls. `--line-strong` (about 1.6:1) is fine for a button with a label, but it is the only
+   * edge of an empty input and of an off switch, and WCAG 1.4.11 asks 3:1 there. `--control-line`
+   * reaches 3:1 against the surface, the chrome and the segmented track in both themes.
+   */
+  --control-line: light-dark(oklch(63% 0.008 255), oklch(58% 0.008 255));
+  /* Choice controls: one sunken track, one raised selected item. In dark the selected item is
+     lighter than its track, as a raised thing is. */
+  --control-track: light-dark(oklch(96% 0.004 255), oklch(16% 0.006 255));
+  --control-selected: light-dark(oklch(100% 0 0), oklch(30% 0.007 255));
+  --control-shadow: 0 1px 1px light-dark(oklch(20% 0.02 255 / 0.08), oklch(0% 0 0 / 0.3));
+  /* Colour swatches: a thin outline, so that a light colour keeps its edge on the surface. */
+  --swatch-outline: light-dark(oklch(0% 0 0 / 0.14), oklch(100% 0 0 / 0.22));
+
+  /* Derived from the tokens above. */
+  --accent-hover: color-mix(in oklab, var(--accent), light-dark(black, white) 12%);
+  /* A destructive Save ("Turn off"): text on the danger fill, 4.5:1 or more in both themes. */
+  --on-danger: light-dark(white, oklch(18% 0.02 25));
+  --danger-hover: color-mix(in oklab, var(--danger), light-dark(black, white) 12%);
+  /* Neutral fills over any background: hover, press and a stronger mark such as the avatar. The
+     opaque `--fill-hover` and `--fill-selected` are for rows and menus on the surface. */
+  --fill-wash: color-mix(in oklab, var(--text) 5%, transparent);
+  --fill-press: color-mix(in oklab, var(--text) 8%, transparent);
+  --fill-strong: color-mix(in oklab, var(--text) 12%, transparent);
+  --shadow-pop: 0 4px 16px light-dark(oklch(20% 0.02 255 / 0.12), oklch(0% 0 0 / 0.45));
+  --glyph-ring: var(--surface);
+  /* The logo (`BrandMark`): outlines in the text colour, the original's pupil in the accent, and
+     the copy's pupil below 24 px as the accent at half strength over what lies behind. */
+  --brand-ink: var(--text);
+  --brand-eye: var(--accent);
+  --brand-copy: color-mix(in srgb, var(--accent) 50%, transparent);
+
+  --font-ui: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-panel: 10px;
+  --radius-control: 6px;
+  --radius-tag: 4px;
+  --radius-item: 4px;
+  --radius-menu: 8px;
+  /* The long text of public pages: the one size outside the scale in the app. */
+  --prose-size: 14px;
+  --prose-line: 22px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --fast: 120ms;
+
+  --sidebar-w: 232px;
+  --panel-w: 400px;
+  --head-h: 44px;
+  --row-h: 40px;
+  --control-h: 28px;
+  --gutter: 24px;
+  /* Content column, gutters included. 1120 + the 400 px panel = 1520 px, the widest layout, so
+     the list keeps its x and its width when the panel opens. */
+  --content-max: 1120px;
+  /* Phone top bar: one 44 px row for brand and account, one 44 px row for the pages, 4 px air. */
+  --topbar-h: 92px;
+
+  /* Safe areas: notch, rounded corners, home indicator. Zero in a browser tab. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Room that window controls take at the right edge of the header (Windows, window controls
+     overlay). Zero without them. */
+  --wco-right: max(0px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* 2  Reset and type --------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--chrome);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--chrome);
+  color: var(--text);
+  font: 450 13px/20px var(--font-ui);
+  font-feature-settings: "cv11", "ss03";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ul,
+ol,
+dl,
+dd,
+figure,
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+fieldset {
+  border: 0;
+  min-width: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+button {
+  cursor: pointer;
+}
+
+svg {
+  flex: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 28%, transparent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.link {
+  color: var(--accent);
+}
+
+.link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.row-flow {
+  display: flex;
+  align-items: center;
+  gap: var(--flow-gap, 8px);
+  flex-wrap: wrap;
+}
+
+/* 3  App shell -------------------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+.skip {
+  position: fixed;
+  top: calc(8px + var(--safe-top));
+  left: calc(8px + var(--safe-left));
+  z-index: 100;
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  transform: translateY(-200%);
+}
+
+.skip:focus-visible {
+  transform: none;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--shell-top, 12px) 8px 8px;
+  gap: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.brand-mark {
+  flex: none;
+}
+
+.brand-mark .brand-ink {
+  fill: var(--brand-ink);
+}
+
+.brand-mark .brand-eye {
+  fill: var(--brand-eye);
+}
+
+.brand-mark .brand-copy {
+  fill: var(--brand-copy);
+}
+
+.brand-mark .brand-hatch {
+  stroke: var(--brand-eye);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* The lower group, set apart. It sits at the bottom of the nav, above the user button. */
+.nav-secondary {
+  margin-top: auto;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  font-weight: 500;
+  transition:
+    background-color var(--fast) ease-out,
+    color var(--fast) ease-out;
+}
+
+.nav-item svg {
+  color: var(--text-3);
+  transition: color var(--fast) ease-out;
+}
+
+.nav-item:hover {
+  background: var(--fill-wash);
+  color: var(--text);
+}
+
+.nav-item[aria-current="page"] {
+  background: var(--fill-press);
+  color: var(--text);
+}
+
+.nav-item[aria-current="page"] svg {
+  color: var(--text);
+}
+
+.nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Something on this page needs attention: a 6 px dot at the end of the item. The words for it are
+   in the item's accessible name. */
+.nav-attention {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  flex: none;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* A header action whose panel or menu is open looks pressed: the fill of the selected row, whose
+   panel it is, and an edge at 3:1. */
+.page-actions .btn:is([aria-pressed="true"], [aria-expanded="true"], [aria-current="true"]),
+.page-actions .btn:has(+ .menu:popover-open) {
+  background: var(--fill-selected);
+  border-color: var(--control-line);
+  color: var(--text);
+}
+
+.user-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color var(--fast) ease-out;
+}
+
+.user-button:hover,
+.user-button[aria-expanded="true"],
+.user-button:has(~ .menu:popover-open) {
+  background: var(--fill-wash);
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-tag);
+  background: var(--fill-strong);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.user-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The main panel: one raised surface, 8 px from the window edge. */
+.frame {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  margin: 8px 8px 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+/*
+ * The frame fills the window to the right edge, with the panel open or not. The pane takes the
+ * free space and the detail panel keeps its width, so the panel docks at the right edge of the
+ * frame, as in Linear. The list keeps its width (`--content-max`) and stays anchored left through
+ * `.content`. The Overview (`is-wide`) sizes its own column.
+ */
+.workspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Header row: 44 px, a hairline below, the actions on the right. */
+.page-head {
+  flex: none;
+  height: max(var(--head-h), env(titlebar-area-height, 0px));
+  padding-right: var(--wco-right);
+  border-bottom: 1px solid var(--line);
+}
+
+.page-head-inner,
+.content {
+  width: 100%;
+  max-width: var(--content-max);
+  /* Left aligned with a fixed gutter, so that the title and rows do not jump with the panel. */
+  margin-inline: 0 auto;
+  padding-inline: var(--gutter);
+}
+
+/* Pages of text and short lists (Admin, API tokens): one column where text and rows end at the
+   same x. Wide: the Overview's map and side column. */
+.frame.is-narrow {
+  --content-max: 848px;
+}
+
+.frame.is-wide {
+  --content-max: 1408px;
+}
+
+/* From 1920 px the Overview's map sets its own width from the number of calendars (overview.css),
+   so the wide column takes no cap. */
+@media (min-width: 1920px) {
+  .frame.is-wide {
+    --content-max: none;
+  }
+}
+
+.page-head-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+}
+
+.page-title {
+  flex: none;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.page-lead {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.page-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.content {
+  padding-block: 8px 48px;
+}
+
+/* The detail panel: a right column with a hairline on its left and its own scroll. */
+.detail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--panel-w);
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  height: var(--head-h);
+  padding-inline: 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+/* The back link follows the heading in the source, so that Tab reaches it after the focus that
+   the panel puts on the heading; on a phone it is drawn first. */
+.detail .detail-back {
+  display: none;
+  order: -1;
+}
+
+/* The way back to the panel this one was opened from (a mirroring), after the title. */
+.detail-from {
+  flex: none;
+  padding-inline: 6px 8px;
+  gap: 2px;
+}
+
+.detail-from-short {
+  display: none;
+}
+
+.detail-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 20px 24px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/*
+ * Narrow window: below 960 px the list would be under 320 px wide beside the 232 px sidebar and the
+ * 400 px panel, so the panel covers the list and the back link replaces the close button. The
+ * sidebar stays; the panel scrolls inside the frame. The phone block below adds the top bar and
+ * the page scroll.
+ */
+@media (max-width: 959.98px) {
+  .frame.has-panel .pane {
+    display: none;
+  }
+
+  .detail {
+    flex: 1;
+    width: 100%;
+    border-left: 0;
+    box-shadow: none;
+  }
+
+  .detail-head {
+    padding-inline: 8px 12px;
+  }
+
+  .detail .detail-back {
+    display: inline-flex;
+  }
+
+  .detail .detail-close {
+    display: none;
+  }
+
+  /* Opened from a mirroring: back goes there, in the back link's place and words. */
+  .detail-head:has(.detail-from) .detail-back {
+    display: none;
+  }
+
+  .detail-from {
+    order: -1;
+  }
+
+  .detail-from-long {
+    display: none;
+  }
+
+  .detail-from-short {
+    display: inline;
+  }
+}
+
+/* Phone: the sidebar becomes a top bar and the page scrolls. */
+@media (max-width: 719.98px) {
+  :root {
+    --gutter: 16px;
+    --topbar-h: calc(92px + var(--safe-top));
+  }
+
+  .app {
+    display: block;
+    height: auto;
+    overflow: visible;
+    padding: 0 var(--safe-right) 0 var(--safe-left);
+  }
+
+  /*
+   * The sidebar becomes a top bar of fixed height (`--topbar-h`), so that the sticky panel head can
+   * sit right under it. Row 1: brand, the lower group as icons, the account. Row 2: the pages as
+   * four equal tabs with their labels, 44 px tall; no scrolling, so no page hides at 320 px.
+   */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-rows: 44px 44px;
+    align-items: center;
+    gap: 0 4px;
+    height: var(--topbar-h);
+    padding: var(--safe-top) calc(8px + var(--wco-right)) 4px 8px;
+    background: var(--chrome);
+  }
+
+  .brand {
+    grid-area: 1 / 1;
+    justify-self: start;
+    margin-left: var(--shell-left, 0px);
+  }
+
+  .user-button {
+    grid-area: 1 / 3;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .user-button .user-email {
+    display: none;
+  }
+
+  /* The groups join the top bar directly. */
+  .nav {
+    display: contents;
+  }
+
+  .nav-group:not(.nav-secondary) {
+    grid-area: 2 / 1 / 3 / -1;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .nav-secondary {
+    grid-area: 1 / 2;
+    flex-direction: row;
+    gap: 0;
+    margin: 0;
+  }
+
+  .nav-item {
+    justify-content: center;
+    gap: 6px;
+    height: 44px;
+    padding-inline: 4px;
+  }
+
+  /* The labels carry the pages; the icons stay in the sidebar. */
+  .nav-group:not(.nav-secondary) .nav-item svg {
+    display: none;
+  }
+
+  .nav-secondary .nav-item {
+    width: 44px;
+    padding: 0;
+  }
+
+  /* The lower group shows its icons; the labels stay as accessible names. */
+  .nav-secondary .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* On a tab the dot sits next to the label, not at the far edge. */
+  .nav-attention {
+    margin-left: 0;
+  }
+
+  .frame {
+    display: block;
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    overflow: visible;
+    min-height: calc(100dvh - var(--topbar-h));
+  }
+
+  .workspace {
+    display: block;
+    height: auto;
+  }
+
+  .pane {
+    display: block;
+  }
+
+  .page-head {
+    height: auto;
+    min-height: var(--head-h);
+  }
+
+  .page-head-inner {
+    flex-wrap: wrap;
+    height: auto;
+    padding-block: 8px;
+    row-gap: 4px;
+  }
+
+  .page-lead {
+    flex: 1 0 100%;
+    order: 3;
+    white-space: normal;
+  }
+
+  .page-scroll {
+    overflow: visible;
+  }
+
+  .detail {
+    /* The frame's 1 px top border sits between the bar and the panel. */
+    min-height: calc(100dvh - var(--topbar-h) - 1px);
+  }
+
+  .detail-head {
+    position: sticky;
+    top: var(--topbar-h);
+    z-index: 10;
+    background: var(--surface);
+  }
+
+  .detail-body {
+    overflow: visible;
+    padding-bottom: 80px;
+  }
+
+  /* Its padding is set with the save bar below, after the rule that it would lose to. */
+  .detail-foot {
+    position: sticky;
+    bottom: 0;
+  }
+
+  .content {
+    padding-bottom: calc(48px + var(--safe-bottom));
+  }
+
+  .menu-pop {
+    inset: calc(46px + var(--safe-top)) calc(8px + var(--safe-right)) auto auto !important;
+  }
+}
+
+/* 4 List ---------------------------------------------------------------------------------- */
+
+/* Full-bleed inside the content: the rows keep the gutter as their own padding. */
+.list {
+  margin-inline: calc(-1 * var(--gutter));
+}
+
+.list-group + .list-group {
+  margin-top: 16px;
+}
+
+.list-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: 32px;
+  padding: 8px var(--gutter) 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.list-group-head h2,
+.list-group-head h3 {
+  font: inherit;
+}
+
+/* The head ("Appears in <name>") keeps its words; the hint after it gives way first and ends in
+   an ellipsis. Only a head wider than the whole line is cut, with an ellipsis. */
+.list-group-head :is(h2, h3) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-group-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-weight: 450;
+}
+
+/*
+ * A row is a flex line by default. A list can put its rows on fixed columns instead, so that the
+ * same part starts at the same x in every row (each row is its own grid, so the tracks must be
+ * fixed): it sets `--row-display: grid`, `--row-main-display: contents` and `--row-columns` with
+ * the line names icon, title, meta, tags, count and status.
+ * Below 760 px of list width (a panel beside the list up to 1400 px, a window under 1000 px, a
+ * phone) the row takes two lines, see below.
+ *
+ * The hairline is a 1 px background layer, not a border: a border inside the 40 px row leaves
+ * 39 px for the content, which then sits on half pixels. It is inset by the gutter at both ends,
+ * so it starts where the text starts and ends where the header ends: it never touches the frame
+ * and never stops in mid-air. The last row adds the same line at its bottom.
+ */
+.list-row {
+  --row-bg: var(--surface);
+  --sep: linear-gradient(var(--line), var(--line)) var(--gutter) 0 / calc(100% - 2 * var(--gutter))
+    1px no-repeat;
+  --sep-end: none;
+  display: var(--row-display, flex);
+  grid-template-columns: var(--row-columns, none);
+  align-items: center;
+  gap: 12px;
+  min-height: var(--row-h);
+  padding: 0 var(--gutter);
+  background: var(--sep), var(--sep-end), var(--row-bg);
+  --glyph-ring: var(--row-bg);
+  transition: background-color var(--fast) ease-out;
+}
+
+.list {
+  container: list / inline-size;
+}
+
+.list-body {
+  list-style: none;
+}
+
+.list-item:last-child > .list-row {
+  --sep-end: linear-gradient(var(--line), var(--line)) var(--gutter) 100% /
+    calc(100% - 2 * var(--gutter)) 1px no-repeat;
+}
+
+a.list-row:hover {
+  --row-bg: var(--fill-hover);
+}
+
+/* The selected row: the selected fill only. A ring drawn across the full-bleed row ran the pane's
+   full width while the hairlines are inset, and an edge bar is ruled out. The open panel and its
+   title name the selection as well. */
+.list-row[aria-current="true"],
+.list-row.is-selected,
+a.list-row[aria-current="true"]:hover {
+  --row-bg: var(--fill-selected);
+}
+
+.list-row:focus-visible {
+  outline-offset: -2px;
+}
+
+/*
+ * A row that opens a panel through a stretched link (`<a class="row-open">` in the title): the link
+ * covers the whole row, so the row is the target and can still hold its own action (`.row-action`
+ * lifts above the link). The focus ring moves from the text to the row. Rows without the link
+ * stay plain.
+ */
+.list-row:has(.row-open) {
+  position: relative;
+  cursor: pointer;
+}
+
+.list-row:has(.row-open):hover {
+  --row-bg: var(--fill-hover);
+}
+
+.list-row.is-selected:has(.row-open),
+.list-row.is-selected:has(.row-open):hover {
+  --row-bg: var(--fill-selected);
+}
+
+.row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.row-open:focus-visible {
+  outline: none;
+}
+
+.row-open:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.row-icon {
+  grid-column: icon;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex: none;
+  color: var(--text-2);
+}
+
+.row-main {
+  display: var(--row-main-display, flex);
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-title {
+  grid-column: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.row-meta {
+  grid-column: meta;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/*
+ * Tags show whole or not at all: a tag cut mid-word ("Workin") reads as a bug. The cell is one
+ * 20 px line that wraps and clips its second line, and a zero-width first item holds that line,
+ * so even the first tag wraps away when it does not fit. Hidden tags stay in the DOM; the panel
+ * shows the same settings in words.
+ */
+.row-tags {
+  grid-column: tags;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  min-width: 0;
+  height: 20px;
+  overflow: hidden;
+}
+
+.row-tags::before {
+  content: "";
+  width: 0;
+  height: 20px;
+  margin-right: -4px;
+}
+
+.row-tags > .tag {
+  flex: none;
+}
+
+/* A count such as "60 copies": tabular, right aligned, so that the numbers line up. */
+.row-count {
+  grid-column: count;
+  justify-self: end;
+  flex: none;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Status: dot and a short phrase, right aligned, so that the phrases end at one x. */
+.row-status {
+  grid-column: status;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: none;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The time of a fine row in a 48 px slot, right aligned and tabular: the dots of every row that
+   shows only a time sit at one x. Rows with words stay readable and push their dot left. */
+.row-status .run > time:last-child {
+  min-width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A narrow list (under 760 px) cannot hold name, level, tags, count and status on one line: the
+ * German level "Nur belegt, wie bei dir" alone is about 190 px, "Verbindung unterbrochen"
+ * 150 px, and the mirroring columns need 752 px with the gutters. The row takes two lines on
+ * fixed tracks instead: name, count and status on the first, the meta (level or address) under
+ * the name on the second. The swatch stays on the name's line. Tags give way first, the count
+ * below 480 px.
+ */
+@container list (width < 760px) {
+  .list-row {
+    --row-display: grid;
+    --row-main-display: contents;
+    grid-template-columns: [icon] 20px [title] minmax(0, 1fr) [count] auto [status] auto;
+    row-gap: 0;
+    padding-block: 6px;
+  }
+
+  .list-row > :is(.row-icon, .row-count, .row-status),
+  .row-title {
+    grid-row: 1;
+  }
+
+  .row-meta {
+    grid-row: 2;
+    grid-column: title / -1;
+  }
+
+  .row-tags {
+    display: none;
+  }
+}
+
+@container list (width < 480px) {
+  .row-count {
+    display: none;
+  }
+}
+
+@media (max-width: 719.98px) {
+  .list-row {
+    min-height: 48px;
+    padding-block: 6px;
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .row-main {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .row-tags {
+    display: none;
+  }
+}
+
+/* 5  Dot, tag -------------------------------------------------------------------------- */
+
+/* Identity marks (`CalendarSwatch`, `ProviderGlyph`, `LevelMark` in src/pages/next/identity.tsx)
+   carry their own presentation. They sit on the text baseline's middle. */
+.cal-swatch,
+.pglyph,
+.lmark {
+  flex: none;
+  vertical-align: middle;
+}
+
+.pglyph {
+  color: var(--text-3);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.dot-ok {
+  background: var(--ok);
+}
+
+.dot-warn {
+  background: var(--warn);
+}
+
+.dot-danger {
+  background: var(--danger);
+}
+
+.dot-idle {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-tag);
+  background: var(--fill-press);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+/* 6  Detail panel parts ---------------------------------------------------------------------- */
+
+/* One property sheet for every panel, on the 4 px grid: state line 16 px under the head;
+   sections 24 + hairline + 24; properties 12 px apart, each a 28 px control band with 2 px air
+   (so controls of neighbouring rows sit 16 px apart); hints 4 px under their control. */
+.detail-body {
+  --label-w: 120px;
+}
+
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  padding-top: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.detail-meta .link {
+  color: var(--text-2);
+}
+
+.detail-meta .link:hover {
+  color: var(--text);
+}
+
+/* A separator between the parts of the state line. */
+.detail-meta-sep::before {
+  content: "·";
+}
+
+.section,
+.props {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section {
+  padding-block: 24px;
+}
+
+/* The first section starts 20 px under the head, or 16 px under the state line. Hidden fields may
+   sit between them, so this counts sections, not neighbours. */
+.detail-body > section.section:first-of-type {
+  padding-top: 20px;
+}
+
+.detail-meta ~ section.section:first-of-type {
+  padding-top: 16px;
+}
+
+/* The hairline between sections is a shadow, not a border, so it takes no height and every row
+   below it stays on the 4 px grid. */
+.section + .section {
+  box-shadow: inset 0 1px var(--line);
+}
+
+.props[hidden] {
+  display: none;
+}
+
+.section-title {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.prop {
+  display: grid;
+  grid-template-columns: var(--label-w) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 16px;
+  row-gap: 4px;
+  padding-block: 2px;
+}
+
+.prop-label {
+  grid-column: 1;
+  min-width: 0;
+  /* Centred on the control band: one line of 20 px in a band of `--control-h`. */
+  padding-block: calc((var(--control-h) - 20px) / 2);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 450;
+  /* Breaks between words only ("Ganztägige Termine überspringen"); a single word longer than the
+     label column breaks where it must, without a hyphen. */
+  hyphens: manual;
+  overflow-wrap: break-word;
+}
+
+.prop-control {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: var(--control-h);
+  color: var(--text);
+}
+
+.prop-hint {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-wrap: pretty;
+}
+
+/* A server refusal at its field (`PropertyRow` `error`): in the control column like a hint, on
+   the hint's 16 px line, in the danger colour. The control gets a danger edge. */
+.prop-error {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 16px;
+  text-wrap: pretty;
+}
+
+.prop.is-stacked > .prop-error {
+  grid-column: 1 / -1;
+  margin-top: -4px;
+}
+
+.input[aria-invalid="true"],
+.select select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+/* A segmented track has no border; its edge is an inset line. */
+.seg[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+/* Notices at the top of a panel (a conflict, a refused save): 16 px under the state line, as the
+   first section is, and 8 px apart. */
+.detail-body > .notice {
+  margin-top: 16px;
+}
+
+.detail-body > .notice + .notice {
+  margin-top: 8px;
+}
+
+/*
+ * A label that wraps (German "Puffer danach") must not push the hint away from its control. The
+ * label spans every row, and the last row is flexible, so the label's extra height lands under
+ * everything else. The row gap moves into the hint's and the error's margin, so empty rows add no
+ * height.
+ */
+.prop:not(.is-stacked) {
+  grid-template-rows: auto auto auto 1fr;
+  row-gap: 0;
+}
+
+.prop:not(.is-stacked) > .prop-label {
+  grid-row: 1 / -1;
+}
+
+.prop:not(.is-stacked) > :is(.prop-hint, .prop-error) {
+  margin-top: 4px;
+}
+
+/* A control that needs both columns goes under its label, its hint under it. */
+.prop.is-stacked {
+  row-gap: 8px;
+}
+
+.prop.is-stacked > * {
+  grid-column: 1 / -1;
+}
+
+.prop.is-stacked > .prop-label {
+  padding-block: 0;
+}
+
+.prop.is-stacked > .prop-hint {
+  margin-top: -4px;
+}
+
+/* Something that belongs to the property above it, such as a disclosure, in the control column. */
+.prop-indent {
+  margin-left: calc(var(--label-w) + 16px);
+}
+
+/* A property whose value differs from the saved one: a 6 px accent dot after its label. The page
+   script sets `data-changed` (see `PropertyRow`, `fields`). */
+.prop[data-changed] > .prop-label::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 0 1px 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+/* The save bar: one row of 48 px. A note about what the save changes sits above the row as one
+   line, never as a box. */
+.detail-foot {
+  flex: none;
+  padding: 10px 20px;
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 1px var(--line),
+    0 -4px 16px light-dark(oklch(20% 0.02 255 / 0.06), oklch(0% 0 0 / 0.3));
+}
+
+/* With script the bar shows only while the form is dirty (`panel.js`). Without script it is a
+   plain Save button. */
+.js .detail-foot:not(.is-dirty) {
+  display: none;
+}
+
+.savebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* A Save button that names a long effect ("6 Spiegelungen für alle sichtbar machen") moves to a
+   line of its own, at the right, instead of running out of the panel. */
+.savebar-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.savebar-text {
+  flex: 1 0 auto;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The keyboard hint after the label, drawn by CSS: the script swaps the label text. It shows once
+   the root says which keys the platform has, and never on touch. Not read aloud. */
+:root[data-platform] .savebar [data-save]::after {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 450;
+}
+
+:root[data-platform="mac"] .savebar [data-save]::after {
+  content: attr(data-kbd-mac);
+  content: attr(data-kbd-mac) / "";
+}
+
+:root[data-platform="other"] .savebar [data-save]::after {
+  content: attr(data-kbd-other);
+  content: attr(data-kbd-other) / "";
+}
+
+/* No hint on touch and below 720 px, where the bar must stay compact; none either when the hint
+   alone would push the Save button onto a second row (`data-tight`, set by `panel.js`). */
+@media (hover: none), (pointer: coarse) {
+  :root[data-platform] .savebar [data-save]::after {
+    content: none;
+  }
+}
+
+@media (max-width: 719.98px) {
+  :root[data-platform] .savebar [data-save]::after {
+    content: none;
+  }
+
+  /* Compact on the phone: the page gutter, a tighter gap, the home indicator's safe area. */
+  .detail-foot {
+    padding: 8px var(--gutter) calc(8px + var(--safe-bottom));
+  }
+
+  .savebar {
+    gap: 6px;
+  }
+}
+
+:root[data-platform] .savebar[data-tight] [data-save]::after {
+  content: none;
+}
+
+/* A Save that turns something off or removes copies ("Turn off") is drawn in the danger tone.
+   `panel.js` sets `data-tone` from the note that names the label. */
+.savebar [data-save][data-tone="danger"] {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.savebar [data-save][data-tone="danger"]:hover {
+  background: var(--danger-hover);
+}
+
+.savebar-notes {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* No note shows, or only notes without words (a warning that only swaps the button label). */
+.savebar-notes:not(:has([data-note]:not([hidden]):not(:empty))) {
+  display: none;
+}
+
+.savebar-note-icon {
+  display: none;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--warn);
+}
+
+.savebar-note-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.savebar-notes.is-warn {
+  color: var(--text);
+}
+
+.savebar-notes.is-warn .savebar-note-icon {
+  display: block;
+}
+
+/* "Saved" in the panel head, the one place for it. */
+.detail-saved {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  animation: saved-fade 300ms 3.7s ease-out forwards;
+}
+
+.detail-saved svg {
+  color: var(--ok);
+}
+
+@keyframes saved-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+.detail-title:focus {
+  outline: none;
+}
+
+/* The guard: a modal dialog that stops a leave with unsaved changes. */
+.guard {
+  /* Wide enough for the three buttons on one row in German ("Speichern und gehen"). */
+  width: min(440px, calc(100vw - 32px));
+  /* Centred in the safe area, so that a notch or the home indicator never covers it. */
+  inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  max-height: calc(100dvh - 32px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+
+.guard::backdrop {
+  background: oklch(0% 0 0 / 0.35);
+}
+
+.guard-title {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.guard-text {
+  margin-top: 4px;
+  color: var(--text-2);
+}
+
+.guard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* The confirmation step of a destructive action, as the body of a panel (`ConfirmStep`). */
+.confirm-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.confirm-text {
+  font-size: 13px;
+}
+
+.confirm-note {
+  font-size: 12px;
+}
+
+/* The status of a row or a panel: dot, then a short time or the state in words. */
+.run {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.run-words.is-danger {
+  color: var(--danger);
+}
+
+/* On the selected fill the danger red reaches only 4.3:1 in light; a touch of the text colour
+   brings it to 5.3:1. */
+.list-row:is([aria-current="true"], .is-selected) .run-words.is-danger {
+  color: color-mix(in oklab, var(--danger) 85%, var(--text));
+}
+
+.run-words.is-warn {
+  color: var(--text-2);
+}
+
+/* 7  Controls -------------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h);
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--fast) ease-out,
+    border-color var(--fast) ease-out,
+    color var(--fast) ease-out;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+.btn-secondary:hover {
+  background: var(--fill-hover);
+}
+
+.btn-ghost {
+  color: var(--text-2);
+}
+
+.btn-ghost:hover {
+  background: var(--fill-wash);
+  color: var(--text);
+}
+
+.btn-danger {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: color-mix(in oklab, var(--danger) 9%, var(--surface));
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--line-strong));
+}
+
+/* A destructive choice without weight: a ghost button in the danger text colour, for example
+   "Discard" in the dialog that stops a leave. */
+.btn-danger-ghost {
+  color: var(--danger);
+}
+
+.btn-danger-ghost:hover {
+  background: color-mix(in oklab, var(--danger) 9%, transparent);
+  color: var(--danger);
+}
+
+.btn-icon {
+  width: var(--control-h);
+  padding: 0;
+}
+
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/*
+ * Choice controls share one look: a sunken track (`--control-track`), unselected items as plain
+ * text, the selected item raised (`--control-selected`) with a `--control-line` edge at 3:1 and
+ * its text in `--text`. Covered: segmented items (radio, checkbox for multi-select such as days,
+ * links with `aria-current`, buttons with `aria-pressed`) and `.choice`, a single toggle outside
+ * a track (for example "Automatic" next to colour swatches).
+ */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--control-h);
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--control-track);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Full width: every item keeps its label plus padding, the rest of the width is shared out. */
+.seg.is-block {
+  display: flex;
+  width: 100%;
+}
+
+.seg.is-block .seg-item {
+  flex: 1 0 auto;
+  padding-inline: var(--seg-pad, 10px);
+}
+
+.seg-item,
+.choice {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 var(--seg-pad, 10px);
+  border: 0;
+  border-radius: var(--radius-item);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--fast) ease-out,
+    box-shadow var(--fast) ease-out,
+    color var(--fast) ease-out;
+}
+
+.choice {
+  padding-inline: 8px;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.seg-item:hover,
+.choice:hover {
+  color: var(--text);
+}
+
+.choice:hover {
+  background: var(--fill-hover);
+}
+
+.seg-item input,
+.choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.seg-item:is(
+  :has(input:checked),
+  [aria-pressed="true"],
+  [aria-current="true"],
+  [aria-current="page"]
+),
+.choice:is(:has(input:checked), [aria-pressed="true"]) {
+  background: var(--control-selected);
+  color: var(--text);
+  box-shadow:
+    0 0 0 1px var(--control-line),
+    var(--control-shadow);
+}
+
+.seg-item:has(input:focus-visible),
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.seg-item:has(input:disabled),
+.choice:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Tiles: a mark above the label, for options that carry a mark each ("What is copied"). Equal
+   widths, so that the marks line up as a scale. */
+.seg.is-tiles {
+  height: auto;
+}
+
+.seg.is-tiles .seg-item {
+  flex: 1 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  height: auto;
+  padding: 6px var(--tile-pad, 8px);
+  line-height: 16px;
+}
+
+/* Colour swatches: a 20 px square with a thin outline, so that a light colour keeps its edge. The
+   chosen one gets a 2 px ring in the text colour, 2 px away; hover a quieter ring. A calendar's
+   colour is lifted towards white in dark mode, as its identity swatch is; an event colour of
+   Google (`.is-event`) is toned down there, so it is not the loudest thing on the page. */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 4px;
+}
+
+.swatch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.swatch-dot {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  /* A square like the calendar swatch: one shape means "colour". */
+  border-radius: var(--radius-item);
+  background: color-mix(in oklab, var(--c), light-dark(var(--c), white) 38%);
+  box-shadow: inset 0 0 0 1px var(--swatch-outline);
+  transition: box-shadow var(--fast) ease-out;
+}
+
+.swatch-dot.is-event {
+  background: color-mix(in oklab, var(--c), light-dark(var(--c), oklch(55% 0 0)) 20%);
+}
+
+/* "No colour": an empty dot, struck through. */
+.swatch-dot.is-none {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--control-line);
+}
+
+.swatch-dot.is-none::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 0.5px);
+  left: 4px;
+  right: 4px;
+  height: 1px;
+  background: var(--control-line);
+  transform: rotate(-45deg);
+}
+
+.swatch:hover .swatch-dot {
+  box-shadow:
+    inset 0 0 0 1px var(--swatch-outline),
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--line-strong);
+}
+
+.swatch:has(input:checked) .swatch-dot {
+  box-shadow:
+    inset 0 0 0 1px var(--swatch-outline),
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--text);
+}
+
+.swatch:has(input:focus-visible) .swatch-dot {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* Switch: a checkbox that looks like one. 28 x 16. Off, the track reaches 3:1. */
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  margin: 0;
+  border-radius: 8px;
+  background: var(--control-line);
+  cursor: pointer;
+  transition: background-color var(--fast) ease-out;
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: light-dark(white, oklch(94% 0.004 255));
+  box-shadow: 0 1px 2px oklch(0% 0 0 / 0.25);
+  transition: transform var(--fast) var(--ease);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  transform: translateX(12px);
+  background: var(--on-accent);
+  box-shadow: none;
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.input,
+.select select {
+  height: var(--control-h);
+  padding: 0 8px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color var(--fast) ease-out;
+}
+
+.input {
+  min-width: 0;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:hover,
+.select select:hover {
+  border-color: color-mix(in oklab, var(--text) 35%, var(--control-line));
+}
+
+.input:focus-visible,
+.select select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+textarea.input {
+  height: auto;
+  padding-block: 5px;
+  resize: vertical;
+}
+
+.input.is-narrow {
+  width: 72px;
+}
+
+/* Time fields: the browser's clock icon is noise next to a typed time; keyboard entry and the
+   phone's own picker stay. */
+.input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
+.select {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.select select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding-right: 26px;
+  cursor: pointer;
+}
+
+.select::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 5px;
+  height: 5px;
+  border-right: 1.4px solid var(--text-3);
+  border-bottom: 1.4px solid var(--text-3);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+/* Disclosure: a chevron drawn like the select's, pointing right, turning down when open. */
+summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 8px 1px 1px;
+  border-right: 1.4px solid var(--text-3);
+  border-bottom: 1.4px solid var(--text-3);
+  vertical-align: middle;
+  transform: rotate(-45deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+details[open] > summary::before {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+/* 8  Notice, menu, empty state ---------------------------------------------------------------- */
+
+.notice {
+  --tone: var(--accent);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--tone) 28%, var(--line));
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--tone) 7%, var(--surface));
+  color: var(--text);
+}
+
+.notice-info {
+  --tone: var(--accent);
+}
+
+.notice-warn {
+  --tone: var(--warn);
+}
+
+.notice-danger {
+  --tone: var(--danger);
+}
+
+.notice svg {
+  margin-top: 2px;
+  color: var(--tone);
+}
+
+.notice-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.notice-title {
+  font-weight: 600;
+}
+
+/* Popover menu. The browser's top layer places it; position is set per menu. */
+.menu {
+  min-width: 232px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-menu);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--fast) ease-out,
+    transform var(--fast) var(--ease),
+    overlay var(--fast) allow-discrete,
+    display var(--fast) allow-discrete;
+}
+
+.menu:popover-open {
+  opacity: 1;
+  transform: none;
+}
+
+@starting-style {
+  .menu:popover-open {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.menu-pop {
+  position: fixed;
+  inset: auto auto calc(48px + var(--safe-bottom)) calc(8px + var(--safe-left));
+  margin: 0;
+}
+
+.menu-head {
+  padding: 6px 8px 8px;
+}
+
+.menu-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  padding: 2px 8px;
+  color: var(--text-2);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--line);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-tag);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--fast) ease-out;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--fill-hover);
+}
+
+.menu-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* A destructive entry ("Delete my data"): danger text, a danger-tinted hover, its own group. */
+.menu-item-danger {
+  color: var(--danger);
+}
+
+.menu-item-danger:hover,
+.menu-item-danger:focus-visible {
+  background: color-mix(in oklab, var(--danger) 9%, transparent);
+}
+
+.menu-foot {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.menu-foot a:hover {
+  color: var(--text);
+}
+
+/* Empty state: plain words and one action, left aligned. No illustration. */
+.empty {
+  max-width: 440px;
+  padding: 56px 0 24px;
+}
+
+.empty-title {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.empty-text {
+  margin-top: 6px;
+  color: var(--text-2);
+}
+
+.empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* 9  Motion ------------------------------------------------------------------------------------ */
+
+/*
+ * Enhanced navigation (`enhance.js`): view transitions, the busy cue and the pending row. Owned by
+ * the enhance work; begin of section.
+ *
+ * Transitions. A normal page load (no script, or a fallback) uses `@view-transition` without
+ * types: the page crossfades in 100 ms and the panel slides in. `enhance.js` starts a typed
+ * transition only for two kinds: "panel-open" (the panel slides in, 160 ms) and "panel-close" (the
+ * panel is wiped out to the right, 120 ms). A page change swaps at once. A row switch, a save, a
+ * filter and back/forward get none: the content changes in place. The sidebar and the rows have
+ * no motion of their own: a named row would move as its own layer when the list reflows.
+ * `--vt-scale` slows every transition down for a review (for example 10).
+ */
+@view-transition {
+  navigation: auto;
+}
+
+.sidebar {
+  view-transition-name: sidebar;
+}
+
+.detail {
+  view-transition-name: detail;
+}
+
+.list-row {
+  view-transition-name: none;
+}
+
+::view-transition-group(*) {
+  animation-duration: calc(100ms * var(--vt-scale, 1));
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: calc(100ms * var(--vt-scale, 1));
+  animation-timing-function: ease-out;
+}
+
+/* The sidebar has no background of its own: the old snapshot would show its selected entry
+   through the new one. The new one stands at once. */
+::view-transition-old(sidebar) {
+  display: none;
+}
+
+::view-transition-new(sidebar) {
+  animation: none;
+}
+
+::view-transition-new(detail) {
+  animation: detail-in calc(160ms * var(--vt-scale, 1)) var(--ease) both;
+}
+
+::view-transition-old(detail) {
+  animation: detail-out calc(90ms * var(--vt-scale, 1)) ease-out both;
+}
+
+/* A panel opens or closes: the list stays as it is, only the panel moves. */
+html:active-view-transition-type(panel-open, panel-close)::view-transition-old(root),
+html:active-view-transition-type(panel-open, panel-close)::view-transition-new(root) {
+  animation: none;
+}
+
+/* A panel closes: its opaque snapshot is clipped away to the right. No fade, so nothing ghosts. */
+html:active-view-transition-type(panel-close)::view-transition-old(detail) {
+  animation: detail-wipe calc(120ms * var(--vt-scale, 1)) var(--ease) both;
+}
+
+@keyframes detail-wipe {
+  from {
+    clip-path: inset(0);
+  }
+
+  to {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+@keyframes detail-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/*
+ * Busy cue: only when an answer takes longer than 150 ms (`enhance.js` sets `aria-busy` on the
+ * root and `.is-pending` on the clicked link or button then). A 2 px line at the top grows toward
+ * the right; under reduced motion it stands still.
+ */
+html[aria-busy="true"] {
+  cursor: progress;
+}
+
+html[aria-busy="true"]::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1000;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  pointer-events: none;
+  animation: busy-line 2s var(--ease) both;
+}
+
+@keyframes busy-line {
+  from {
+    transform: scaleX(0.08);
+  }
+
+  to {
+    transform: scaleX(0.9);
+  }
+}
+
+a.list-row.is-pending {
+  --row-bg: var(--fill-hover);
+}
+
+/* The panel being left takes no input (`inert`) until the next page is in place. */
+html[aria-busy="true"] aside.detail[inert] {
+  opacity: 0.6;
+}
+
+.btn.is-pending,
+.nav-item.is-pending {
+  cursor: progress;
+}
+
+.page-title:focus {
+  outline: none;
+}
+
+/* Controls that need a script stay out of a page without one. */
+html:not(.js) [data-needs-script] {
+  display: none;
+}
+
+/* End of the enhanced-navigation section. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Shared small patterns ------------------------------------------------------------------------ */
+
+/* A level glyph with its words, on one line. */
+.level-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pane:focus {
+  outline: none;
+}
+
+/* Touch targets: on a phone every control in a row, the segmented control and the save bar reach
+   40 px. */
+@media (max-width: 719.98px) {
+  :root {
+    --control-h: 40px;
+  }
+
+  .seg {
+    --seg-pad: 12px;
+    height: 46px;
+  }
+
+  .seg-item,
+  .choice {
+    height: 40px;
+  }
+
+  .switch::after {
+    content: "";
+    position: absolute;
+    inset: -12px -8px;
+  }
+
+  .swatch {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .swatches {
+    gap: 0;
+    padding-block: 0;
+  }
+
+  /* "Automatic" takes its own line, so the swatches stay one row. It must not shrink into that
+     line's margin: the 44 px minimum width of the touch block would then cut its word. */
+  .swatches .choice {
+    flex-shrink: 0;
+    margin-right: 100%;
+  }
+
+  .seg.is-tiles {
+    --tile-pad: 4px;
+  }
+
+  .mx-still summary {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  .savebar .btn {
+    min-width: 44px;
+  }
+
+  .guard-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  /* A link in a row's control is its own target; a link inside a sentence grows its hit area
+     above and below without moving the text. */
+  .prop-control .link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  .prop-hint .link {
+    padding-block: 12px;
+    margin-block: -12px;
+  }
+}
+
+/*
+ * Touch (iPad, phones, a touch screen) and any window under 720 px: every control is 44 px high
+ * and wide, and inputs are 16 px so that iOS does not zoom on focus. A narrow desktop window gets
+ * the same targets as a phone, so one layout serves both. This comes after the phone block and
+ * replaces its 40 px.
+ */
+@media (pointer: coarse), (max-width: 719.98px) {
+  :root {
+    --control-h: 44px;
+  }
+
+  .detail .detail-back,
+  .detail-from {
+    min-height: 44px;
+  }
+
+  .seg {
+    height: 48px;
+  }
+
+  .seg-item,
+  .choice {
+    height: 44px;
+    min-width: 44px;
+  }
+
+  .switch::after {
+    content: "";
+    position: absolute;
+    inset: -14px -8px;
+  }
+
+  .swatch {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .list-row {
+    min-height: 48px;
+  }
+
+  .nav-item,
+  .user-button,
+  .menu-item,
+  .act-chip,
+  .row-action,
+  .connect-item {
+    height: 44px;
+  }
+
+  .menu-row {
+    min-height: 44px;
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .input,
+  .select select {
+    font-size: 16px;
+  }
+
+  .prop-control .link,
+  .mx-still summary,
+  .cal-reload {
+    min-height: 44px;
+  }
+
+  /* A link that stands alone, or ends a hint, grows its hit area without moving the text. */
+  .prop-hint .link,
+  .detail-meta .link,
+  .ov-all {
+    padding-block: 15px;
+    margin-block: -15px;
+  }
+}
+
+/* No hover on touch: a press shows on the control itself, and the browser's grey flash is off. */
+@media (hover: none) {
+  a,
+  button,
+  summary,
+  label {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  a.list-row:active {
+    --row-bg: var(--fill-hover);
+  }
+
+  .nav-item:active,
+  .user-button:active,
+  .btn-ghost:active {
+    background: var(--fill-press);
+  }
+
+  .btn-secondary:active,
+  .menu-item:active {
+    background: var(--fill-hover);
+  }
+
+  .btn-primary:active {
+    background: var(--accent-hover);
+  }
+}
+
+/*
+ * App windows. The desktop shell (`html[data-shell="desktop"]`, set by theme.js from the user
+ * agent) and an installed app with window controls overlay have no title bar: the window buttons
+ * sit on the page, on macOS at the top left, on Windows at the top right. The sidebar and the page
+ * header then drag the window, and every control inside them does not. `app-region` takes no
+ * `var()` (Chromium reads `none`), so the values are literal and the two contexts repeat them.
+ * `--shell-top` is the room above the first sidebar item for the macOS buttons; `--shell-left` is
+ * their width, for a layout that puts a control at the left edge.
+ */
+html[data-shell="desktop"][data-platform="mac"] {
+  --shell-top: 40px;
+  --shell-left: 78px;
+}
+
+html[data-shell="desktop"] :is(.sidebar, .page-head) {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+html[data-shell="desktop"]
+  :is(.sidebar, .page-head)
+  :is(a, button, input, select, summary, [role="button"], [contenteditable], .menu) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+@media (display-mode: window-controls-overlay) {
+  html[data-platform="mac"] {
+    --shell-top: 40px;
+    --shell-left: 78px;
+  }
+
+  :is(.sidebar, .page-head) {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  :is(.sidebar, .page-head)
+    :is(a, button, input, select, summary, [role="button"], [contenteditable], .menu) {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
+/* Standalone window, desktop shell: a window, not a page. No pull to refresh or rubber band, no
+   selection or long-press menu on the chrome (the content stays selectable). `--app-feel` is `none`
+   there and unset in a browser tab, where `auto` stays. */
+@media (display-mode: standalone), (display-mode: window-controls-overlay) {
+  :root {
+    --app-feel: none;
+  }
+}
+
+html[data-shell] {
+  --app-feel: none;
+}
+
+html,
+body {
+  overscroll-behavior: var(--app-feel, auto);
+}
+
+:is(.sidebar, .page-head, .detail-head, .detail-foot, .btn, .seg, .list-row, .menu) {
+  -webkit-user-select: var(--app-feel, auto);
+  user-select: var(--app-feel, auto);
+  -webkit-touch-callout: var(--app-feel, default);
+}
+
+/* A scroll area keeps its scroll: it never passes the gesture on to the page behind it. */
+.page-scroll,
+.detail-body {
+  overscroll-behavior: contain;
+}
+
+/* Phones narrower than 360 px: the German "Spiegelung" takes the meta size to fit its tab, and four
+   German segments ("Nicht kopiert") fit 288 px only with less padding. */
+@media (max-width: 359.98px) {
+  .nav-group:not(.nav-secondary) .nav-item {
+    padding-inline: 2px;
+    font-size: 12px;
+  }
+
+  .seg {
+    --seg-pad: 6px;
+  }
+}
+
+/* Print: the shell's fixed-height panes would cut the page at the first sheet. Print the content
+   and the open panel as one flowing document, without the navigation and the header actions. */
+@media print {
+  .app,
+  .frame,
+  .workspace,
+  .pane,
+  .detail,
+  .detail-form {
+    display: block;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .sidebar,
+  .skip,
+  .page-actions,
+  .detail-close,
+  .detail-back,
+  .detail-from,
+  .detail-foot {
+    display: none;
+  }
+
+  .frame {
+    margin: 0;
+    border: 0;
+  }
+
+  .page-scroll,
+  .detail-body {
+    overflow: visible;
+  }
+
+  .detail {
+    width: auto;
+    border-left: 0;
+    box-shadow: none;
+    break-before: page;
+  }
+}
+
+/*
+ * Windows high contrast (forced colours). The browser replaces backgrounds and shadows with system
+ * colours, so a state that lives in a fill or a box shadow disappears. Each one gets an outline or
+ * a border in a system colour instead.
+ */
+@media (forced-colors: active) {
+  .seg-item:is(
+    :has(input:checked),
+    [aria-pressed="true"],
+    [aria-current="true"],
+    [aria-current="page"]
+  ),
+  .choice:is(:has(input:checked), [aria-pressed="true"]),
+  .page-actions .btn:is([aria-pressed="true"], [aria-expanded="true"], [aria-current="true"]) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .seg,
+  .choice {
+    border: 1px solid ButtonBorder;
+  }
+
+  .switch {
+    border: 1px solid ButtonText;
+  }
+
+  .switch::before {
+    background: ButtonText;
+    top: 1px;
+    left: 1px;
+  }
+
+  .switch:checked {
+    background: Highlight;
+  }
+
+  .switch:checked::before {
+    background: HighlightText;
+  }
+
+  .nav-item[aria-current="page"],
+  .list-row:is([aria-current="true"], .is-selected) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  /* The hairlines are inset shadows, which forced colours drop. */
+  .list-row,
+  .section + .section,
+  .mx-when-copied > .section:first-child {
+    border-top: 1px solid GrayText;
+  }
+
+  /* Status dots and colour swatches carry meaning in their colour; keep it, with the ring that
+     marks the chosen swatch. */
+  .dot,
+  .nav-attention,
+  .swatch-dot,
+  .cal-swatch {
+    forced-color-adjust: none;
+  }
+
+  /* The changed-property dot and the selected tile keep a system colour. */
+  .prop[data-changed] > .prop-label::after {
+    background: Highlight;
+  }
+}
+
+/* 10  Palette ------------------------------------------------------------------------------------
+   The command palette (Cmd/Ctrl+K), its trigger, the shortcut sheet and the key hints. The look of
+   the app's dialogs; rows of 32 px (44 px on touch) with the shared selected fill. */
+
+.palette-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin-top: -4px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--fast) ease-out,
+    color var(--fast) ease-out;
+}
+
+.palette-trigger:hover {
+  border-color: var(--line-strong);
+  color: var(--text-2);
+}
+
+.palette-trigger svg {
+  flex: none;
+}
+
+.palette-trigger-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette kbd,
+.palette-trigger kbd {
+  display: inline-block;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tag);
+  background: var(--chrome);
+  color: var(--text-3);
+  font: 500 11px/18px var(--font-ui);
+  text-align: center;
+}
+
+/* The platform hint: Cmd on Apple systems, Ctrl elsewhere; none before `theme.js` ran. */
+:root:not([data-platform="mac"]) .kbd-mac,
+:root:not([data-platform="other"]) .kbd-other {
+  display: none;
+}
+
+.palette {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(70dvh, 560px);
+  margin: 12vh auto auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+
+.palette[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.palette::backdrop {
+  background: oklch(0% 0 0 / 0.35);
+}
+
+.palette-input {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+}
+
+.palette-input input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.palette-input input::placeholder {
+  color: var(--text-3);
+}
+
+.palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 8px 12px;
+  scroll-padding: 32px 0 8px;
+  /* The last row fades out above the footer instead of showing a cut row of key caps. A mask
+     reads only the alpha of the colour. */
+  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 12px), transparent);
+}
+
+.pg-label {
+  padding: 12px 8px 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.palette [role="option"] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.palette [role="option"][aria-selected="true"] {
+  background: var(--fill-selected);
+}
+
+.po-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.po-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.po-keys {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.palette-empty {
+  padding: 24px 16px 32px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.palette-foot {
+  display: flex;
+  flex: none;
+  gap: 12px 16px;
+  overflow: hidden;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--chrome);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.palette-foot span {
+  white-space: nowrap;
+}
+
+.palette-foot kbd {
+  min-width: 18px;
+  height: 18px;
+  line-height: 16px;
+}
+
+/* The shortcut sheet. */
+.sheet {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 8px 20px;
+}
+
+.sheet-title {
+  outline: none;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.sheet-list {
+  overflow-y: auto;
+  padding: 0 20px;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+  border-top: 1px solid var(--line);
+}
+
+.sheet-row dd {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.sheet-hint {
+  padding: 12px 20px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.po-id {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.po-kind {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.po-keys + .po-kind {
+  margin-left: 0;
+}
+
+.po-check {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-2);
+}
+
+/* No keyboard assumed on touch: no hints, taller rows, no zoom on focus. */
+@media (hover: none), (pointer: coarse) {
+  .po-keys,
+  .palette-foot,
+  .palette kbd,
+  .palette-trigger kbd {
+    display: none;
+  }
+
+  .palette [role="option"] {
+    min-height: 44px;
+  }
+
+  .palette-input input {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 719.98px) {
+  /* An icon button in the top bar, between the brand and the lower group. */
+  .sidebar {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+  }
+
+  .palette-trigger {
+    grid-area: 1 / 2;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .palette-trigger kbd,
+  .palette-trigger-label {
+    display: none;
+  }
+
+  .nav-secondary {
+    grid-area: 1 / 3;
+  }
+
+  .user-button {
+    grid-area: 1 / 4;
+  }
+
+  .palette {
+    width: auto;
+    max-width: none;
+    max-height: calc(70dvh - var(--safe-top));
+    margin: 0;
+    inset: calc(8px + var(--safe-top)) calc(8px + var(--safe-right)) auto
+      calc(8px + var(--safe-left));
+  }
+
+  .palette-input input {
+    font-size: 16px;
+  }
+
+  .sheet {
+    max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
+  }
+}
+
+/* End of the palette section. */
+
+/* Phone: the kind repeats the group head, so it goes; below 520 px the key hints go too. */
+@media (max-width: 719.98px) {
+  .po-kind {
+    display: none;
+  }
+}
+
+@media (max-width: 519.98px) {
+  .palette-foot {
+    display: none;
+  }
+}

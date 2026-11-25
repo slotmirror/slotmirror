@@ -59,7 +59,14 @@ describe("rules", () => {
       "SELECT user_id, account_id, detail FROM audit_events WHERE kind = 'rule_created'",
     ).first<{ user_id: string; account_id: string; detail: string }>();
     expect(event).toMatchObject({ user_id: user.id, account_id: "acc-r1" });
-    expect(JSON.parse(event?.detail ?? "{}")).toEqual({ detailLevel: "title", daysAhead: 30 });
+    // The rule starts paused: its level is "off" until it is turned on. IDs and levels only.
+    expect(JSON.parse(event?.detail ?? "{}")).toEqual({
+      detailLevel: "title",
+      daysAhead: 30,
+      choice: "off",
+      markPrivate: true,
+      fromAccount: "acc-r1",
+    });
   });
 
   it("records the deletion of a rule once", async () => {
@@ -198,5 +205,49 @@ describe("pause and enable", () => {
       enabled: number;
     }>();
     expect(row?.enabled).toBe(0);
+  });
+});
+
+describe("legacy rule form and the default block title", () => {
+  const postDe = (cookie: string, form: Record<string, string>) =>
+    exports.default.fetch(`${BASE}/rules`, {
+      method: "POST",
+      headers: {
+        cookie,
+        "accept-language": "de",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(form).toString(),
+      redirect: "manual",
+    });
+  const storedTitle = async (userId: string) =>
+    (
+      await env.DB.prepare(
+        "SELECT json_extract(sync_settings, '$.blockTitle') AS title FROM users WHERE id = ?",
+      )
+        .bind(userId)
+        .first<{ title: string | null }>()
+    )?.title;
+
+  it("stores the German default title with the first rule", async () => {
+    const { user, cookie } = await signIn("title-de@org.example");
+    await setupCalendars("acc-lt1", user.id);
+    expect(await storedTitle(user.id)).toBeNull();
+    expect((await postDe(cookie, { source: "acc-lt1-work", target: "acc-lt1-test" })).status).toBe(
+      302,
+    );
+    expect(await storedTitle(user.id)).toBe("Belegt");
+  });
+
+  it("keeps a title that the user stored", async () => {
+    const { user, cookie } = await signIn("title-own@org.example");
+    await setupCalendars("acc-lt2", user.id);
+    await env.DB.prepare(
+      "UPDATE users SET sync_settings = json_set(sync_settings, '$.blockTitle', 'Focus') WHERE id = ?",
+    )
+      .bind(user.id)
+      .run();
+    await postDe(cookie, { source: "acc-lt2-work", target: "acc-lt2-test" });
+    expect(await storedTitle(user.id)).toBe("Focus");
   });
 });
