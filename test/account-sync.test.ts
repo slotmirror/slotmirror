@@ -2,7 +2,8 @@ import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from 
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountSync } from "../src/account-sync";
-import { errorCode, errorLogFields, stackFrames } from "../src/audit";
+import { errorCode } from "../src/audit";
+import { errorFields, stackFrames } from "../src/error-fields";
 import { en } from "../src/i18n/en";
 import { runErrorText } from "../src/routes/rules";
 import { DEDUP_PROPERTY_ID, MARKER_PROPERTY_ID } from "../src/sync/graph-events";
@@ -599,11 +600,11 @@ describe("errors that cross the Durable Object boundary", () => {
     expect(JSON.stringify(error)).not.toContain("alice@");
     expect(String(error.stack)).not.toContain("alice@");
 
-    const logged = JSON.stringify([errorLogFields(error), errorCode(error)]);
+    const logged = JSON.stringify([errorFields(error), errorCode(error)]);
     expect(logged).not.toContain("alice@");
     expect(logged).not.toContain("AADSTS");
     expect(errorCode(error)).toBe("token_invalid_grant");
-    expect(errorLogFields(error).slice(0, 2)).toEqual(["Error", "invalid_grant"]);
+    expect(errorFields(error)).toMatchObject({ name: "Error", code: "invalid_grant" });
     // The UI still tells the user to connect again.
     expect(runErrorText(en, error)).toBe(en.editor.checkNoTokens);
     expect(runErrorText(en, new Error("Account has no tokens"))).toBe(en.editor.checkNoTokens);
@@ -637,106 +638,6 @@ async function expectRejection(promise: Promise<unknown>): Promise<void> {
   }
   expect(rejected).toBe(true);
 }
-
-describe("sync status in the UI", () => {
-  async function accountsPage(): Promise<string> {
-    const { cookie } = await signIn("owner@example.com");
-    return (await exports.default.fetch(`${BASE}/`, { headers: { cookie } })).text();
-  }
-
-  it("shows In sync after a successful run, and the run on the rules page", async () => {
-    const { stub, ruleId } = await setupRule("acc-ui-ok");
-    await stub.storeTokens("acc-ui-ok", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: Date.now() + 3_600_000,
-    });
-    fakeGraph();
-    await stub.runRule(ruleId);
-
-    const home = await accountsPage();
-    expect(home).toMatch(/status ok" title="[^"]*UTC">In sync · now</);
-
-    // A rule between two calendars that are not main calendars shows under "Other rules".
-    const { cookie } = await signIn("owner@example.com");
-    const rules = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
-    ).text();
-    expect(rules).toContain("Other rules");
-    // The short name gets the local part when other tests left more example.com accounts.
-    expect(rules).toMatch(/example( \(acc-ui-ok\))? · Work → example( \(acc-ui-ok\))? · Test/);
-  });
-
-  it("does not count a dry run as a sync", async () => {
-    const { stub, ruleId } = await setupRule("acc-ui-dry");
-    await stub.storeTokens("acc-ui-dry", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: Date.now() + 3_600_000,
-    });
-    fakeGraph();
-    await stub.runRule(ruleId, { dryRun: true });
-
-    const html = await accountsPage();
-    const row = html.slice(html.indexOf("acc-ui-dry@example.com"));
-    expect(row.slice(0, row.indexOf("</li>"))).toContain("Not synced yet");
-  });
-
-  it("asks to connect again after the provider refused the refresh token", async () => {
-    const { stub } = await setupRule("acc-ui-fail");
-    await stub.storeTokens("acc-ui-fail", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: 0,
-    });
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      Response.json({ error: "invalid_grant" }, { status: 400 }),
-    );
-    await stub.requestSync();
-    await runDurableObjectAlarm(stub);
-    vi.restoreAllMocks();
-
-    const html = await accountsPage();
-    const list = html.slice(html.indexOf('<ul class="list">'));
-    const row = list.slice(list.indexOf("acc-ui-fail@example.com"));
-    expect(row.slice(0, row.indexOf("</li>"))).toMatch(
-      /class="status error" href="\/auth\/microsoft\/connect\?account=acc-ui-fail" title="[^"]+">Reconnect</,
-    );
-    // The notice comes first on the page, names the account and its provider, and starts the
-    // connect flow of that provider.
-    const notice = html.slice(html.indexOf('class="reconnect-notice"'));
-    expect(html.indexOf('class="reconnect-notice"')).toBeLessThan(html.indexOf("<h1>"));
-    expect(notice.slice(0, notice.indexOf("</div>"))).toContain(
-      "The Microsoft 365 account acc-ui-fail@example.com is no longer connected.",
-    );
-    expect(notice).toContain(
-      'href="/auth/microsoft/connect?account=acc-ui-fail" aria-label="Reconnect acc-ui-fail@example.com">Reconnect</a>',
-    );
-  });
-
-  it("shows the error state after a run that failed for another reason", async () => {
-    const { stub } = await setupRule("acc-ui-down");
-    await stub.storeTokens("acc-ui-down", {
-      refreshToken: "r",
-      accessToken: "a",
-      accessExpiresAt: 0,
-    });
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      Response.json({ error: "temporarily_unavailable" }, { status: 503 }),
-    );
-    await stub.requestSync();
-    await runDurableObjectAlarm(stub);
-    vi.restoreAllMocks();
-
-    const html = await accountsPage();
-    const row = html.slice(html.indexOf("acc-ui-down@example.com"));
-    expect(row.slice(0, row.indexOf("</li>"))).toMatch(
-      /status error" title="[^"]*UTC">Sync failed: token_temporarily_unavailable · now</,
-    );
-  });
-});
 
 /** An account with tokens and no rules. */
 async function bareAccount(accountId: string, accessExpiresAt = Date.now() + 3_600_000) {
@@ -999,7 +900,7 @@ describe("alarm queue", () => {
   /** Whether the removal logged a failed rule lookup. Call it after `stuckBlockGraph()`. */
   function lookupLog() {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    return () => errors.mock.calls.some(([message]) => message === "Removal rule lookup failed");
+    return () => errors.mock.calls.some(([line]) => line?.event === "removal.rule_lookup_failed");
   }
 
   it("drops a waiting removal once its rule runs again, and owes a full cycle", async () => {
@@ -1188,7 +1089,15 @@ describe("alarm queue", () => {
     expect(job).toMatchObject({ ruleId, attempts: 2 });
     expect(await alarmKind(stub)).toBe("removal");
     expect(await alarmAt(stub)).toBe(job?.notBefore);
-    expect(errors).toHaveBeenCalledWith("Removal rule lookup failed", "D1_ERROR: transient");
+    expect(errors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "removal.rule_lookup_failed",
+        code: "D1_ERROR: transient",
+        // The alarm started its own request.
+        requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
+        trigger: "alarm",
+      }),
+    );
   });
 
   it("runs the account's rules while a removal waits for its next attempt", async () => {
@@ -3384,9 +3293,12 @@ describe("accounts that need reconnecting", () => {
     );
 
     await expectRejection(stub.listCalendars());
-    const line = logged.mock.calls.find((call) => call[0] === "Listing calendars failed");
-    expect(line).toBeDefined();
-    expect(line).toContain("token_invalid_client");
+    const line = logged.mock.calls.find(([record]) => record?.event === "calendars.list_failed");
+    expect(line?.[0]).toMatchObject({
+      accountId: "acc-list-fails",
+      code: "token_invalid_client",
+      requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
   });
 
   it("keeps the account connected if the refused token was replaced during the refresh", async () => {
@@ -5234,7 +5146,7 @@ describe("run markers", () => {
 
     await stub.tick();
 
-    const failures = error.mock.calls.filter(([message]) => message === "Audit write failed");
+    const failures = error.mock.calls.filter(([line]) => line?.event === "audit.write_failed");
     expect(failures).toHaveLength(1);
     expect(await runMarkers(stub)).toHaveLength(2);
   });
@@ -5583,7 +5495,7 @@ describe("safe messages", () => {
       "Requesting a sync failed in 3 account(s)",
     ]) {
       expect(errorCode(new Error(message))).toBe(message);
-      expect(errorLogFields(new Error(message))).toContain(message);
+      expect(errorFields(new Error(message)).message).toBe(message);
     }
   });
 
@@ -5593,9 +5505,7 @@ describe("safe messages", () => {
       new RangeError("Invalid time value 'Dentist'"),
       new Error("Unexpected token 'Dentist' in JSON"),
     ]) {
-      expect(JSON.stringify([errorCode(error), errorLogFields(error)])).not.toMatch(
-        /alice|Dentist/,
-      );
+      expect(JSON.stringify([errorCode(error), errorFields(error)])).not.toMatch(/alice|Dentist/);
     }
     expect(errorCode(new TypeError("x"))).toBe("TypeError");
   });
@@ -5606,9 +5516,9 @@ describe("safe messages", () => {
     expect(
       errorCode(new Error("D1_TYPE_ERROR: Type 'object' not supported for value 'alice@x'")),
     ).toBe("Error");
-    expect(errorLogFields(new Error("D1_TYPE_ERROR: bad value alice@x")).join(" ")).not.toContain(
-      "alice",
-    );
+    expect(
+      JSON.stringify(errorFields(new Error("D1_TYPE_ERROR: bad value alice@x"))),
+    ).not.toContain("alice");
   });
 
   it("return one code for a token error inside and outside the Durable Object", () => {

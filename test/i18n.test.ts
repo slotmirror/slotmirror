@@ -80,3 +80,34 @@ describe("privacy page", () => {
     );
   });
 });
+
+describe("consistency of the redesign texts", () => {
+  it("writes the count of copies not written the same way in English and German", () => {
+    expect(en.next.shell.run.notWritten(1200)).toBe("1,200 not written");
+    expect(de.next.shell.run.notWritten(1200)).toBe("1.200 nicht geschrieben");
+    expect(en.next.shell.run.notWritten(1)).toBe("1 not written");
+  });
+
+  it("has one session-end text, the panel's, and the live region has no copy of it", () => {
+    expect("sessionEnded" in en.next.shell.enhance).toBe(false);
+    expect("sessionEnded" in de.next.shell.enhance).toBe(false);
+    expect(en.next.shell.panel.sessionEnded).toContain("Sign in again in another tab, then save.");
+    expect(de.next.shell.panel.sessionEnded).toContain("Melde dich in einem anderen Tab neu an");
+  });
+
+  it("names the account menu one way, in the menu button and in every text that points to it", () => {
+    expect(en.next.shell.user.menu).toBe("Account menu");
+    expect(de.next.shell.user.menu).toBe("Kontomenü");
+    for (const [catalog, other] of [
+      [en, /user menu/i],
+      [de, /benutzermen/i],
+    ] as const) {
+      const texts = JSON.stringify(catalog);
+      expect(texts).not.toMatch(other);
+    }
+    expect(en.next.admin.you).toContain("the account menu");
+    expect(de.next.admin.you).toContain("das Kontomenü");
+    expect(en.next.palette.keys.singleKeyHint).toContain("the account menu");
+    expect(de.next.palette.keys.singleKeyHint).toContain("im Kontomenü");
+  });
+});

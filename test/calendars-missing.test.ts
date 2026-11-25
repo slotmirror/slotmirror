@@ -1,5 +1,6 @@
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { en } from "../src/i18n/en";
 import { addAccount, BASE, signIn } from "./helpers";
 
 async function page(path: string, cookie: string): Promise<string> {
@@ -8,12 +9,11 @@ async function page(path: string, cookie: string): Promise<string> {
 }
 
 describe("an account without calendars", () => {
-  it("warns on the accounts page and on the rules page", async () => {
+  it("warns on the Mirroring page and offers to load the calendars again", async () => {
     const { user, cookie } = await signIn("owner@example.com");
     await addAccount(user.id, "acc-no-calendars", "empty@example.com");
-    expect(await page("/", cookie)).toContain("No calendars could be loaded.");
-    const rules = await page("/rules", cookie);
-    expect(rules).toContain("so the rules do not show this account");
-    expect(rules).toContain('action="/rules/calendars/refresh"');
+    const mirroring = await page("/mirroring", cookie);
+    expect(mirroring).toContain(en.next.mirroring.notices.missingText);
+    expect(mirroring).toContain('action="/rules/calendars/refresh"');
   });
 });

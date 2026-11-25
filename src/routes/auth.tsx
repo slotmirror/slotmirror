@@ -1,14 +1,14 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { RESUME_COOKIE, resumeTarget } from "../mcp-oauth";
+import { appPath } from "../app-base";
+import { RESUME_COOKIE, resumePath, resumeTarget } from "../mcp-oauth";
 import { DEFAULT_ORG_ID } from "../access";
 import type { AppEnv } from "../app-env";
-import { errorLogFields, recordAudit } from "../audit";
+import { recordAudit } from "../audit";
 import { PROVIDER_LABEL, signInProviders, type Provider } from "../config";
 import { checkOAuthState, createOAuthState, OAUTH_COOKIE, type OAuthPurpose } from "../oauth";
 import { i18nFromContext } from "../i18n";
-import { MessagePage } from "../pages/message";
-import { OAuthErrorPage } from "../pages/oauth-error";
+import { MessagePage, OAuthErrorPage } from "../pages/next/public";
 import {
   classifyExchangeError,
   classifyProviderError,
@@ -25,6 +25,7 @@ import { APP_NAME } from "../brand";
 import { refreshUserCalendars } from "../calendars";
 import { admitSignIn, CONSUMER_TENANT_ID } from "../users";
 import { accountSync } from "../durable";
+import { carrier, log } from "../telemetry";
 
 export const auth = new Hono<AppEnv>();
 
@@ -69,13 +70,12 @@ function oauthErrorPage(
   const label = PROVIDER_LABEL[provider];
   const reference = loggedReference ?? newReference();
   if (!loggedReference) {
-    console.error(
-      "oauth error",
+    log.error("oauth.provider_error", {
       provider,
       purpose,
-      `code=${info.code ?? "none"}`,
-      `ref=${reference}`,
-    );
+      code: info.code ?? "none",
+      reference,
+    });
   }
   const helpHref = `${TROUBLESHOOTING_URL}${info.anchor ? `#${info.anchor}` : ""}`;
   const retryHref = `/auth/${provider}/${purpose === "sign-in" ? "login" : "connect"}`;
@@ -182,7 +182,11 @@ auth.post("/logout", async (c) => {
   const user = c.get("user");
   if (user) await recordAudit(c.env.DB, { orgId: user.orgId, userId: user.id, kind: "sign_out" });
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true });
-  return c.redirect("/");
+  // "Not you?" on the consent page: the app's request opens again, signed out, so that it waits for
+  // the next sign-in. Only a path of the authorization endpoint passes. A body that cannot be read
+  // counts as no resume value, so signing out redirects instead of answering 500.
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  return c.redirect(resumePath(form.resume) ?? "/");
 });
 
 auth.get("/:provider/login", async (c) => {
@@ -286,11 +290,10 @@ auth.get("/:provider/callback", async (c) => {
       error instanceof TokenError
         ? classifyExchangeError(error.code, error.aadsts)
         : classifyExchangeError(undefined, undefined);
-    console.error(
-      `${provider} token exchange failed`,
-      `code=${info.code ?? "none"}`,
-      `ref=${reference}`,
-      ...errorLogFields(error),
+    log.error(
+      "oauth.token_exchange_failed",
+      { provider, code: info.code ?? "none", reference },
+      error,
     );
     return oauthErrorPage(c, provider, stored.purpose, info, 502, reference);
   }
@@ -399,6 +402,7 @@ auth.get("/:provider/callback", async (c) => {
       accessExpiresAt: Date.now() + tokens.expires_in * 1000,
     },
     provider,
+    carrier(),
   );
   await c.env.DB.prepare("UPDATE accounts SET needs_reconnect = 0 WHERE id = ?")
     .bind(account.id)
@@ -411,7 +415,7 @@ auth.get("/:provider/callback", async (c) => {
     detail: { provider },
   });
   // Load the new account's calendars now, so that the editor can use them at once.
-  await refreshUserCalendars(c.env, user.id);
+  await refreshUserCalendars(c.env, user.id, t.editor.defaultBlockTitle);
   // With a second account the next step is choosing where events go.
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE user_id = ?")
     .bind(user.id)
@@ -419,5 +423,5 @@ auth.get("/:provider/callback", async (c) => {
   const rules = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM rules WHERE user_id = ?")
     .bind(user.id)
     .first<{ n: number }>();
-  return c.redirect((count?.n ?? 0) >= 2 && (rules?.n ?? 0) === 0 ? "/rules" : "/");
+  return c.redirect((count?.n ?? 0) >= 2 && (rules?.n ?? 0) === 0 ? appPath("/mirroring") : "/");
 });

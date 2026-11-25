@@ -33,6 +33,8 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `src/api-tokens.ts`               | Personal API tokens: hashes, expiry, the daily limit of tool calls                |
 | `src/mcp-oauth.ts`                | OAuth for MCP: metadata, client registration, codes, grants, signed access tokens |
 | `src/account-sync.ts`             | `AccountSync` Durable Object, one per connected account: tokens, mappings, alarms |
+| `src/telemetry.ts`                | Logger, spans and request context behind a port; adapters in `src/runtime/`       |
+| `src/error-fields.ts`             | What a log may hold of an error: name, safe code and message, stack frames        |
 | `src/offboarding.ts`              | Removing accounts and users: rule holds, jobs, retirement                         |
 | `src/cleanup.ts`                  | Tombstones of offboarding jobs: end state and the blocks left per calendar        |
 | `src/providers/`                  | Microsoft Graph and Google Calendar clients, plain `fetch`                        |
@@ -42,6 +44,8 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 | `migrations/`                     | D1 migrations (registry: orgs, users, accounts, calendars, rules, runs)           |
 | `test/`                           | Vitest tests with `@cloudflare/vitest-plugin`                                     |
 | `suite/`                          | Scenario suite: frozen list in `v1/`, own oracle, drivers. Not in the Worker      |
+| `public/`                         | Static sources: CSS, scripts, fonts, icons. Served via `dist/public`              |
+| `scripts/asset-manifest*.mjs`     | Asset build: minify, hashed names, `dist/public`, manifest                        |
 | `design/`                         | Logo and design assets                                                            |
 
 ## Rules
@@ -52,11 +56,21 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **Privacy.** Never log or store event titles, descriptions, attendees or locations unless a rule
   explicitly asks for that detail level. The audit log stores IDs and times, not content. Never
   log tokens.
+- **Log through `log` from `src/telemetry.ts`, never `console`.** Use a dotted event name in lower
+  case (`"calendars.list_failed"`), scalar fields, and the caught value as the third argument:
+  `log.error("removal.failed", { ruleId }, error)`. The logger keeps only `errorFields(error)`.
+  Log IDs of slotmirror, not remote calendar IDs: a Google calendar ID is often an email address.
+  `test/log-hygiene.test.ts` checks the event names and that no raw error reaches a log. A call
+  into `AccountSync` passes `carrier()` as its last argument, so that the instance logs with the
+  caller's request ID.
 - **Migrations are additive.** Add tables and columns. Do not drop or rename anything. Do not add
   `NOT NULL` without a default. The previous Worker must run on the new schema, because migrations
   run before the code and do not run backward. See `website/src/content/docs/docs/updating.md`.
-- **The MCP endpoint is read-only and D1-only.** It takes the user from the bearer token, never from a
-  cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
+- **The MCP endpoint is read-only.** Its tools read D1 only, except `list_events`
+  (`src/mcp-events.ts`): it reads calendars through each account's `AccountSync` instance
+  (`readCompareEvents`), never with a token or provider call of its own, and only for a credential
+  whose user allowed events while `MCP_EVENTS_ENABLED=1`. It takes the user from the bearer token,
+  never from a cookie or an argument. Name each field in `src/read-model.ts`; never pass on a row, `rules.options`
   or an audit `detail`. Every query has an upper bound: D1 refuses all queries of a deployment at its
   daily limit, also those of the sync. Tool calls are charged with the rows they read
   (`src/d1-rows.ts`). Tool handlers hold no SQL: each query is a function in `src/read-model.ts`,
@@ -76,7 +90,20 @@ Local secrets live in `.dev.vars` (copy `.dev.vars.example`). Never commit `.dev
 - **No Node-only APIs.** Use Web Crypto, `fetch`, `TextEncoder`.
 - **Every user-facing string goes through `src/i18n/`.** Add the key to `en.ts` and every other
   catalog; a test fails if catalogs differ.
-- **Light mode only** in the UI. No `prefers-color-scheme: dark` styles.
+- **Assets are built.** `wrangler.jsonc` serves `dist/public` (gitignored), not `public/`. `pnpm
+  assets:generate` minifies the CSS and JS of `public/next` with esbuild (`vendor/` stays as it is)
+  and puts the content hash into the file name (`base.<hash>.css`). `public/_headers` makes
+  `/next/*` immutable, which is safe only because of that. Use `asset()` for every URL under
+  `/next`; never write a bare name. Run `pnpm assets:generate` after any change in `public/`; `wrangler
+  dev` and `wrangler deploy` run it too. `pnpm assets:check` fails if `src/asset-manifest.ts` is stale.
+  Size budgets measure the built files: `test/perf-budget.node.test.ts`.
+- **Page addresses come from `appPath()`** (`src/app-base.ts`), never from a typed `/next/...`.
+  The Overview is `/`; the pages are `/mirroring`, `/calendars`, `/activity`, `/admin` and `/tokens`.
+  The shell sets `html[data-app-base]` for the scripts. `/next/<file>.<hash>.<ext>` is an asset URL
+  (`asset()`), not a page: a page redirect must never match it. A page router installs its own
+  `appGuard`; never `use("*")` it on the whole app, because `/` is also the sign-in page.
+- **Light and dark everywhere** in the UI. Colours are `light-dark()` tokens in
+  `public/next/base.css`; use no raw colour values, and check every UI change in both modes.
 - **Tests first for sync logic.** Every change to the sync engine needs a test, including the
   recurring-event matrix.
 

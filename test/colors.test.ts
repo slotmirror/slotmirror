@@ -100,6 +100,38 @@ describe("block colour", () => {
     expect(toGraphBlock(await blockWith(), "tag").categories).toEqual([]);
   });
 
+  /** A block of EVENT (category "Private") with a block colour and these passed categories. */
+  async function passing(blockColor: string, categories: string[]) {
+    const block = await blockWith(blockColor);
+    return { ...block, categories };
+  }
+
+  it("writes the block colour and the passed categories into Graph, each once", async () => {
+    const options = ruleOptionsSchema.parse({
+      blockColor: "Focus",
+      passCategories: [
+        { from: "private", to: "focus" },
+        { from: "Private", to: "Kunde" },
+      ],
+    });
+    const [block] = await desiredBlocks("rule", [EVENT], options);
+    expect(toGraphBlock(block!, "tag").categories).toEqual(["Focus", "Kunde"]);
+    expect(toGraphBlock(await passing("", ["Kunde"]), "tag").categories).toEqual(["Kunde"]);
+  });
+
+  it("drops passed values that Outlook cannot take, so that bad stored data never fails a write", async () => {
+    const block = await passing("slotmirror", ["", " ", "a,b", "x".repeat(101), "Kunde"]);
+    expect(toGraphBlock(block, "tag").categories).toEqual(["slotmirror", "Kunde"]);
+  });
+
+  it("gives the first passed colour ID precedence over the block colour in Google", async () => {
+    expect(toGoogleBlock(await passing("5", ["Focus", "12", "9", "3"]), "tag").colorId).toBe("9");
+    expect(toGoogleBlock(await passing("", ["11"]), "tag").colorId).toBe("11");
+    // Without a valid passed colour ID the block colour stays, and an invalid one never reaches Google.
+    expect(toGoogleBlock(await passing("5", ["Focus", "12", "0", ""]), "tag").colorId).toBe("5");
+    expect(toGoogleBlock(await passing("", ["Focus"]), "tag").colorId).toBeNull();
+  });
+
   it("accepts only values the target can show", () => {
     expect(blockColorFor("google", " 7 ")).toBe("7");
     expect(blockColorFor("google", "12")).toBeNull();

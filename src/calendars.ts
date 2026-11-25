@@ -1,7 +1,20 @@
 import type { CalendarInfo } from "./providers/calendar-client";
-import { errorCode, errorLogFields } from "./audit";
+import { errorCode } from "./audit";
 import { accountSync } from "./durable";
-import { reconcileRules } from "./editor";
+import { reconcileRules, setDefaultBlockTitle } from "./editor";
+import type { Provider } from "./config";
+import { carrier, log } from "./telemetry";
+
+/** A connected account as the pages list it. */
+export interface AccountRow {
+  id: string;
+  provider: Provider;
+  email: string;
+  tenantId: string | null;
+  createdAt: string;
+  /** 1 if the provider refused the refresh token; the account has to be connected again. */
+  needsReconnect: number;
+}
 
 export interface CalendarRow {
   id: string;
@@ -11,6 +24,19 @@ export interface CalendarRow {
   name: string;
   canEdit: boolean;
   isDefault: boolean;
+}
+
+/** The connected accounts of a user as the pages list them, ordered by provider and address. */
+export async function accountRows(db: D1Database, userId: string): Promise<AccountRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, provider, email, tenant_id AS tenantId, created_at AS createdAt,
+              needs_reconnect AS needsReconnect
+       FROM accounts WHERE user_id = ? ORDER BY provider, email`,
+    )
+    .bind(userId)
+    .all<AccountRow>();
+  return results;
 }
 
 /** Calendars of all accounts of a user, from the registry. */
@@ -41,8 +67,17 @@ export async function userCalendars(db: D1Database, userId: string): Promise<Cal
   }));
 }
 
-/** Load the calendar list of every account of a user from the provider into the registry. */
-export async function refreshUserCalendars(env: Env, userId: string): Promise<void> {
+/**
+ * Load the calendar list of every account of a user from the provider into the registry. The
+ * reconcile at the end can create a user's first rules. With `defaultTitle`, the block title of the
+ * user's language is stored first, as for every other path that creates a first rule
+ * (`setDefaultBlockTitle` never replaces a stored title and does nothing once a rule exists).
+ */
+export async function refreshUserCalendars(
+  env: Env,
+  userId: string,
+  defaultTitle?: string,
+): Promise<void> {
   const { results: accounts } = await env.DB.prepare(
     `SELECT a.id, a.email, u.org_id AS orgId FROM accounts a JOIN users u ON u.id = a.user_id
      WHERE a.user_id = ?`,
@@ -54,9 +89,9 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
     // One account with expired or missing tokens must not block the calendars of the others.
     let calendars: CalendarInfo[];
     try {
-      calendars = await accountSync(env, account.id).listCalendars();
+      calendars = await accountSync(env, account.id).listCalendars(carrier());
     } catch (error) {
-      console.error("Loading calendars failed", account.id, ...errorLogFields(error));
+      log.error("calendars.load_failed", { accountId: account.id }, error);
       continue;
     }
     if (calendars.length === 0) continue;
@@ -87,8 +122,9 @@ export async function refreshUserCalendars(env: Env, userId: string): Promise<vo
   if (!orgId) return;
   // A calendar that loaded or became writable can complete a direction, such as a group rule.
   try {
+    if (defaultTitle !== undefined) await setDefaultBlockTitle(env, userId, defaultTitle);
     await reconcileRules(env, { id: userId, orgId });
   } catch (error) {
-    console.error("Adding missing rules failed", errorCode(error));
+    log.error("rules.reconcile_failed", { userId, code: errorCode(error) }, error);
   }
 }

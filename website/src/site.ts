@@ -7,4 +7,4 @@ export const repo = "https://github.com/slotmirror/slotmirror";
 export const previewWidth = "1280";
 export const previewHeight = "640";
 export const previewAlt =
-  'The slotmirror logo and the headline "Stop getting double-booked", next to a screenshot of the Rules page.';
+  'The slotmirror logo and the headline "Stop getting double-booked", next to a screenshot of the Mirroring page.';

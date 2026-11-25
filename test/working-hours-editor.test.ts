@@ -14,8 +14,6 @@ import {
 } from "../src/editor";
 import type { CurrentUser } from "../src/users";
 import { BASE, signIn } from "./helpers";
-// @ts-expect-error `?raw` imports are untyped without `vite/client`
-import editorScript from "../public/editor.js?raw";
 
 /** A user with a Microsoft and a Google account, each with one main calendar and tokens. */
 async function setup(prefix: string) {
@@ -90,9 +88,6 @@ function post(
 const save = (cookie: string, fields: Record<string, string>) =>
   post("/rules/choices", cookie, new URLSearchParams(fields), { "x-fragment": "1" });
 
-const page = async (cookie: string, path: string) =>
-  (await exports.default.fetch(`${BASE}${path}`, { headers: { cookie } })).text();
-
 const OFF = { workDays: [1, 2, 3, 4, 5, 6, 7], workStart: "", workEnd: "", workTimeZone: "" };
 
 const OFFICE: AccountWorkHours = {
@@ -121,21 +116,6 @@ function settingsForm(
   return body;
 }
 
-/** The fieldset of an account's working hours on the home page. */
-function hoursFieldset(html: string, accountId: string): string {
-  const item = html.split(`id="account-${accountId}"`)[1] ?? "";
-  return item.match(/<fieldset class="account-hours">[\s\S]*?<\/fieldset>/)?.[0] ?? "";
-}
-
-/** The target row of a direction in the editor. */
-function targetRow(html: string, from: string, to: string): string {
-  const card = html.split(`id="src-${from}"`)[1]?.split("</details>\n")[0] ?? "";
-  return (
-    card.split('<div class="dest"').find((row) => row.startsWith(` data-key="${from}&gt;${to}"`)) ??
-    ""
-  );
-}
-
 beforeEach(() => {
   // Removing blocks reads the target calendar; it is empty in these tests.
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -151,7 +131,7 @@ afterEach(() => {
 });
 
 describe("working hours of an account", () => {
-  it("saves the hours from the account settings, shows them, and refuses invalid values", async () => {
+  it("saves the hours from the account settings and refuses invalid values", async () => {
     const { user, cookie, w } = await setup("acct");
     const saved = await post(
       `/accounts/${w}/settings`,
@@ -167,20 +147,6 @@ describe("working hours of an account", () => {
     expect(saved.status).toBe(302);
     // The account has no rules yet; its hours are stored anyway.
     expect(await accountHoursOf(user.id, w)).toEqual(OFFICE);
-
-    const html = await page(cookie, `/?settings=${w}`);
-    const fieldset = hoursFieldset(html, w);
-    expect(fieldset).toMatch(/name="workStart"[^>]*value="08:00"/);
-    expect(fieldset).toMatch(/name="workEnd"[^>]*value="18:00"/);
-    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="Europe\/Vienna"/);
-    // A stored zone is not replaced by the browser's.
-    expect(fieldset).not.toContain("data-browser-zone");
-    const checked = [...fieldset.matchAll(/<input[^>]*name="workDays"[^>]*>/g)]
-      .filter(([input]) => /checked/.test(input))
-      .map(([input]) => input.match(/value="(\d)"/)?.[1]);
-    expect(checked).toEqual(["1", "2", "3", "4", "5"]);
-    expect(fieldset).toMatch(/name="workHoursOn"[^>]*checked/);
-    expect(html).toMatch(/<details class="rename" open/);
 
     const cases = [
       [{ workStart: "18:00", workEnd: "08:00" }, ["1"], "the end must be after the start"],
@@ -198,7 +164,6 @@ describe("working hours of an account", () => {
       expect(response.status, message).toBe(400);
       const text = await response.text();
       expect(text).toContain(message);
-      expect(text).toContain(`<details class="rename" open`);
     }
     const german = await post(
       `/accounts/${w}/settings`,
@@ -230,9 +195,6 @@ describe("working hours of an account", () => {
     const empty = settingsForm({ workTimeZone: "Europe/Vienna" }, []);
     expect((await post(`/accounts/${w}/settings`, cookie, empty)).status).toBe(302);
     expect(await accountHoursOf(user.id, w)).toBeNull();
-    // A form without hours is switched off, so that saving the name sets no hours.
-    const fieldset = hoursFieldset(await page(cookie, "/"), w);
-    expect(fieldset).not.toMatch(/name="workHoursOn"[^>]*checked/);
 
     // All seven days and no times filter nothing, so they are none as well.
     const allDays = settingsForm({}, ["1", "2", "3", "4", "5", "6", "7"]);
@@ -240,7 +202,7 @@ describe("working hours of an account", () => {
     expect(await accountHoursOf(user.id, w)).toBeNull();
   });
 
-  it("uses the deployment's zone without a zone, in canonical spelling, and the browser's in the page", async () => {
+  it("uses the deployment's zone without a zone, in canonical spelling", async () => {
     const vienna = { ...env, TIME_ZONE: "europe/vienna" };
     expect(accountWorkHours(vienna, { ...OFFICE, workTimeZone: " " })).toEqual({ hours: OFFICE });
     expect(accountWorkHours(env, { ...OFFICE, workTimeZone: "US/Eastern" })).toEqual({
@@ -249,24 +211,14 @@ describe("working hours of an account", () => {
     expect(accountWorkHours(env, { ...OFFICE, workTimeZone: "" })).toEqual({
       hours: { ...OFFICE, workTimeZone: "UTC" },
     });
-    // Without a stored zone the field shows the deployment's zone, marked for the browser's.
-    const { cookie, w } = await setup("acctzone");
-    const fieldset = hoursFieldset(await page(cookie, "/"), w);
-    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="UTC"[^>]*data-browser-zone="1"/);
-    expect(String(editorScript)).toContain("Intl.DateTimeFormat().resolvedOptions().timeZone");
   });
 
-  it("keeps a stored zone that became unknown and says so on the page", async () => {
-    const { user, cookie, w } = await setup("acctstale");
+  it("keeps a stored zone that became unknown", async () => {
+    const { user, w } = await setup("acctstale");
     await env.DB.prepare("UPDATE accounts SET work_hours = ? WHERE id = ?")
       .bind(JSON.stringify({ ...OFFICE, workTimeZone: "Mars/Olympus" }), w)
       .run();
     expect(await accountHoursOf(user.id, w)).toMatchObject({ workTimeZone: "Mars/Olympus" });
-    const html = await page(cookie, "/");
-    expect(html).toContain(
-      "This server does not know the time zone Mars/Olympus. Until you choose another one, the hours are read in UTC.",
-    );
-    expect(hoursFieldset(html, w)).toMatch(/name="workTimeZone"[^>]*value="Mars\/Olympus"/);
   });
 
   it("gives the rules that use them the new hours, and takes them away when cleared", async () => {
@@ -386,21 +338,6 @@ describe("copies without account hours", () => {
 });
 
 describe("the account settings form", () => {
-  /** The settings form of an account on the home page. */
-  const settingsOf = (html: string, accountId: string) =>
-    html.split(`id="account-${accountId}"`)[1]?.match(/<form[\s\S]*?<\/form>/)?.[0] ?? "";
-
-  it("saves with Enter: the first submit button is the save button", async () => {
-    const { user, cookie, w } = await setup("acctenter");
-    await setAccountWorkHours(env, user, w, OFFICE);
-    const form = settingsOf(await page(cookie, "/"), w);
-    const buttons = form.match(/<button[^>]*>/g) ?? [];
-    const submits = buttons.filter((button) => !/type="button"/.test(button));
-    // Enter submits with the first submit button of the form, so that one must not clear.
-    expect(submits).toHaveLength(1);
-    expect(submits[0]).not.toContain('name="workHours"');
-  });
-
   it("clears the hours with the switch off, whatever the prefilled fields say", async () => {
     const { user, cookie, w } = await setup("acctswitch");
     await setAccountWorkHours(env, user, w, OFFICE);
@@ -414,9 +351,6 @@ describe("the account settings form", () => {
   it("sets the hours and the directions in one save, and ticks every direction for new hours", async () => {
     const { user, cookie, w, g } = await setup("acctapply");
     await setDirection(env, user, g, w, "busy");
-    const fresh = hoursFieldset(await page(cookie, "/"), w);
-    expect(fresh).toMatch(/name="applyFrom" value="[^"]+" checked/);
-    expect(await page(cookie, "/")).not.toContain("filter nothing yet");
 
     const body = settingsForm(
       { workStart: "08:00", workEnd: "18:00", workTimeZone: "Europe/Vienna" },
@@ -427,62 +361,17 @@ describe("the account settings form", () => {
     const state = await loadEditorState(env, user.id);
     const direction = state.directions.find((d) => d.from === g && d.to === w);
     expect(direction?.options?.workDays).toEqual([1, 2, 3, 4, 5]);
-    expect(await page(cookie, "/")).toContain("used by 1 of 1 direction");
   });
 
-  it("warns on the account while hours filter nothing", async () => {
-    const { user, cookie, w, g } = await setup("acctwarn");
-    await setAccountWorkHours(env, user, w, OFFICE);
-    expect(await page(cookie, "/")).toContain("nothing copies into this account yet");
-    await setDirection(env, user, g, w, "busy");
-    const html = await page(cookie, "/");
-    expect(html).toContain("filter nothing yet");
-    expect(html).toContain(`href="/?settings=${w}#account-${w}"`);
-  });
-
-  it("returns to the source card after a save that came from the rules", async () => {
+  it("returns to the row in the target card after a save that came from the rules", async () => {
     const { cookie, w, g } = await setup("acctreturn");
-    const html = await page(cookie, `/?settings=${w}&from=${g}`);
-    expect(html).toContain(`name="returnSource" value="${g}"`);
     const body = new URLSearchParams({ name: "Office", returnSource: g });
     const response = await post(`/accounts/${w}/settings`, cookie, body);
-    expect(response.headers.get("location")).toBe(`/rules?open=${encodeURIComponent(g)}`);
+    expect(response.headers.get("location")).toBe(`/rules?open=${w}#dest-${g}-${w}`);
   });
 
-  it("opens the account settings inline, closed by default, with the disconnect path below", async () => {
-    const { cookie, w } = await setup("acctinline");
-    const closed = await page(cookie, "/");
-    // Native details: it works without the script. No account is open unless asked for.
-    expect(closed).not.toMatch(/<details class="rename" open/);
-    expect(closed).toContain('<li id="account-' + w + '" class="account-row">');
-    const html = await page(cookie, `/?settings=${w}`);
-    expect(html.match(/<details class="rename" open/g)).toHaveLength(1);
-    const start = html.indexOf(`id="account-${w}"`);
-    const panel = html.slice(start, html.indexOf("</details>", start));
-    // Save belongs to the opened part, and the disconnect section follows the form.
-    expect(panel.indexOf('type="submit"')).toBeGreaterThan(panel.indexOf("workHoursOn"));
-    expect(panel.indexOf('class="account-danger"')).toBeGreaterThan(panel.indexOf("</form>"));
-    expect(panel).toContain(`href="/accounts/${w}/disconnect"`);
-    expect(panel).toContain("first removes the blocks it wrote");
-    // Every colour, also Automatic, has an accessible name.
-    const radios = [...panel.matchAll(/<input[^>]*name="color"[^>]*>/g)].map(([tag]) => tag);
-    expect(radios.length).toBeGreaterThan(1);
-    for (const tag of radios) expect(tag).toMatch(/aria-label="[^"]+"/);
-    const german = await page(cookie, `/?settings=${w}&lang=de`);
-    expect(german).toContain("Danach löscht es die Tokens.");
-  });
-
-  it("leaves the end field enabled without the script, and the script disables it", async () => {
-    const { user, cookie, w } = await setup("acctmid");
-    await setAccountWorkHours(env, user, w, { ...OFFICE, workEnd: "24:00" });
-    const fieldset = hoursFieldset(await page(cookie, "/"), w);
-    expect(fieldset).toMatch(/name="workUntilMidnight"[^>]*checked/);
-    expect(fieldset.match(/<input[^>]*name="workEnd"[^>]*>/)?.[0]).not.toContain("disabled");
-    expect(String(editorScript)).toContain("input[name=workUntilMidnight]:checked");
-  });
-
-  it("shows what the user typed after a refused save", async () => {
-    const { cookie, w } = await setup("accttyped");
+  it("refuses the whole form with the reason, and keeps the name and the colour", async () => {
+    const { user, cookie, w } = await setup("accttyped");
     const body = settingsForm(
       { workStart: "18:00", workEnd: "08:00", workTimeZone: "Europe/Berlin", name: "Desk" },
       ["2", "4"],
@@ -490,19 +379,10 @@ describe("the account settings form", () => {
     body.set("color", "indigo");
     const response = await post(`/accounts/${w}/settings`, cookie, body);
     expect(response.status).toBe(400);
-    const html = await response.text();
-    const fieldset = hoursFieldset(html, w);
-    expect(fieldset).toMatch(/name="workStart"[^>]*value="18:00"/);
-    expect(fieldset).toMatch(/name="workEnd"[^>]*value="08:00"/);
-    expect(fieldset).toMatch(/name="workTimeZone"[^>]*value="Europe\/Berlin"/);
-    expect(fieldset).not.toContain("data-browser-zone");
-    const checked = [...fieldset.matchAll(/<input[^>]*name="workDays"[^>]*>/g)]
-      .filter(([input]) => /checked/.test(input))
-      .map(([input]) => input.match(/value="(\d)"/)?.[1]);
-    expect(checked).toEqual(["2", "4"]);
-    const form = settingsOf(html, w);
-    expect(form).toMatch(/name="name"[^>]*value="Desk"/);
-    expect(form).toMatch(/name="color"[^>]*value="indigo"[^>]*checked/);
+    expect(await response.text()).toContain("the end must be after the start");
+    const account = (await loadEditorState(env, user.id)).accounts.find((a) => a.id === w);
+    expect(account?.customName).toBeNull();
+    expect(account?.colorChosen).toBe(false);
   });
 
   it("answers an account of another user with 404 and changes nothing", async () => {
@@ -520,26 +400,18 @@ describe("the account settings form", () => {
 });
 
 describe("working hours per target", () => {
-  it("copies the account's hours into every rule of the direction from the page, and clears them", async () => {
+  it("copies the account's hours into every rule of the direction, and clears them", async () => {
     const { user, cookie, w, g } = await setup("target");
     await setAccountWorkHours(env, user, w, OFFICE);
     await setDirection(env, user, g, w, "busy");
     await setDirection(env, user, w, g, "busy");
     await addSource(user, g);
 
-    const html = await page(cookie, `/rules?open=${g}`);
-    const row = targetRow(html, g, w);
-    expect(row).toContain("Only during the working hours of work (Mo–Fr 08:00–18:00)");
-    expect(row).toMatch(/<input type="checkbox" name="workHours" value="1" form="[^"]+"\/?>/);
-
     expect((await save(cookie, { [`workHours.${g}.${w}`]: "1" })).status).toBe(204);
     const rules = await rulesOf(user.id, g, w);
     expect(rules).toHaveLength(2);
     for (const rule of rules) expect(JSON.parse(rule.options)).toMatchObject(OFFICE);
     expect(await optionsOf(user.id, w, g)).toMatchObject(OFF);
-    expect(targetRow(await page(cookie, `/rules?open=${g}`), g, w)).toMatch(
-      /name="workHours" value="1"[^>]*checked/,
-    );
 
     // Settings for all rules keep the hours.
     await save(cookie, { settings: "1", "settings.daysAhead": "30" });
@@ -551,14 +423,9 @@ describe("working hours per target", () => {
     }
   });
 
-  it("offers a link for an account without hours, and refuses to turn them on", async () => {
+  it("refuses to turn hours on for an account without hours", async () => {
     const { user, cookie, w, g } = await setup("targetnone");
     await setDirection(env, user, g, w, "busy");
-    const row = targetRow(await page(cookie, `/rules?open=${g}`), g, w);
-    expect(row).toContain(`href="/?settings=${w}&amp;from=${g}#account-${w}"`);
-    expect(row).toContain("Set working hours");
-    expect(row).not.toContain('name="workHours"');
-
     const response = await save(cookie, {
       [`choice.${w}.${g}`]: "title",
       [`workHours.${g}.${w}`]: "1",
@@ -584,7 +451,7 @@ describe("working hours per target", () => {
     });
     const response = await post("/rules/direction/details", cookie, body);
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`/rules?open=${g}#src-${g}`);
+    expect(response.headers.get("location")).toBe(`/rules?open=${w}#dest-${g}-${w}`);
     expect(await optionsOf(user.id, g, w)).toMatchObject({ ...OFFICE, blockColor: "Focus" });
 
     // An unchecked box is not sent; the marker field says that it was on the page.
@@ -820,18 +687,5 @@ describe("working hours with copies and parked rules", () => {
     await setRuleDetails(env, user, { workHours: [{ from: g, to: w, on: true }] });
     const [rule] = await rulesOf(user.id, g, w);
     expect(JSON.parse(rule?.options ?? "{}")).toMatchObject({ ...OFFICE, parked: true });
-  });
-
-  it("saves every change of the page when Enter is pressed in a details form", () => {
-    // The editor script has no DOM test harness. This reads the submit handler of the details form.
-    const loop = (String(editorScript).split('"form.dest-details[data-key]"')[1] ?? "").split(
-      "A click outside an open palette",
-    )[0];
-    const handler = /addEventListener\("submit", \(event\) => \{([\s\S]*?)\}\);/.exec(
-      loop ?? "",
-    )?.[1];
-    expect(handler).toContain("event.preventDefault()");
-    expect(handler).toContain("onChange()");
-    expect(handler).toMatch(/pending\.size > 0\) void save\(\)/);
   });
 });

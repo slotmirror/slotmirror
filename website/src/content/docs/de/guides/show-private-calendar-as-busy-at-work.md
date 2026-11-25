@@ -23,15 +23,17 @@ der Termin, verschiebt oder entfernt es den Block.
 
 1. Richte slotmirror mit dem [Quickstart](../../../docs/quickstart/) ein und verbinde dein Arbeits-
    und dein privates Konto.
-2. Füge auf der Seite **Regeln** beide Kalender zur Gruppe **Blocken sich gegenseitig** hinzu.
-3. Klappe die Karte des privaten Kontos auf. Lass für den Arbeitskalender **Als belegt** stehen.
-4. Lass unter **Für alle Kalender** die Option **Kopien als privat markieren** eingeschaltet.
-   Kolleginnen und Kollegen sehen dann „Privat“. Du siehst weiterhin alles.
+2. Öffne die Seite **Spiegelung** und wähle **Alle als belegt spiegeln**. Jeder Kalender zeigt
+   dann die Termine des anderen als belegt.
+3. Öffne die Zeile vom privaten Konto zum Arbeitskalender. Lass unter **Was kopiert wird** die
+   Stufe **Nur belegt** stehen.
+4. Lass **Was andere sehen** auf **Privater Termin**. Kolleginnen und Kollegen sehen dann einen
+   privaten Termin, im Google Kalender „Belegt“. Du siehst weiterhin alles.
 5. Wähle **Speichern**.
 
-## Den Titel der Blöcke wählen
+## Den Titel der Kopien wählen
 
-Die Blöcke tragen den Titel aus **Titel belegter Blöcke**, zum Beispiel „Belegt“ oder „Geblockt“.
+Die Kopien tragen den Titel aus **Titel der Kopien bei „Nur belegt“**, zum Beispiel „Belegt“ oder „Geblockt“.
 Titel, Ort und Teilnehmende des privaten Termins gelangen nicht in den Arbeitskalender.
 
 ## Für ein Team
@@ -44,9 +46,10 @@ einem privaten Konto zu einem Arbeitskonto auf „Belegt“. Siehe
 
 ### Sehen Kolleginnen und Kollegen, worum es bei dem Termin geht?
 
-Nein. Ein Block trägt den Titel aus **Titel belegter Blöcke**, standardmäßig „Belegt“. **Kopien als
-privat markieren** ist standardmäßig eingeschaltet. Wer deinen Kalender öffnen darf, sieht deshalb
-„Privat“. Wer nur nachsieht, wann du frei bist, sieht, dass du belegt bist. Titel, Ort und
+Nein. Eine Kopie trägt den Titel aus **Titel der Kopien bei „Nur belegt“** unter **Für alle
+Spiegelungen**, standardmäßig „Belegt“. **Was andere sehen** steht standardmäßig auf **Privater
+Termin**. Wer deinen Kalender öffnen darf, sieht deshalb einen privaten Termin, im Google Kalender
+„Belegt“. Wer nur nachsieht, wann du frei bist, sieht, dass du belegt bist. Titel, Ort und
 Teilnehmende des Termins bleiben in deinem privaten Kalender.
 
 ### Wer hat Zugriff auf meinen privaten Kalender?
@@ -59,8 +62,8 @@ hat. Siehe [Privacy and data location](../../../docs/privacy/).
 ### Was ist mit Feiertagen und freien Tagen?
 
 Ganztägige Termine blocken standardmäßig den ganzen Tag. Termine, die als frei markiert sind,
-bleiben draußen. Um alle ganztägigen Termine auszulassen, schalte **Ganztägige Termine auslassen**
-unter **Für alle Kalender** ein.
+bleiben draußen. Um alle ganztägigen Termine auszulassen, schalte **Ganztägige Termine überspringen**
+unter **Für alle Spiegelungen** auf der Seite **Spiegelung** ein.
 
 ## Verwandte Anleitungen
 

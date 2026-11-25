@@ -1,0 +1,248 @@
+/* Styles of the calendars page. Tokens: base.css. */
+
+/* Notices above the list ---------------------------------------------------------------------- */
+
+.cal-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cal-notices:empty {
+  display: none;
+}
+
+.cal-notices + .cal-list {
+  margin-top: 16px;
+}
+
+.cal-notices .notice {
+  align-items: center;
+}
+
+/* List ----------------------------------------------------------------------------------------- */
+
+/* Rows on fixed columns (base.css, section 4): calendar, address, tags, status. The status column
+   holds "Connect again" when a calendar needs it. */
+.cal-list {
+  --row-display: grid;
+  --row-main-display: contents;
+  /* Address, tags and status share the flexible width by ratio, never by content, so every row
+     (its own grid) resolves the same tracks. */
+  --row-columns: [icon] 20px [title] 160px [meta] minmax(0, 2fr) [tags] minmax(0, 1.4fr) [status]
+    minmax(140px, 1.2fr);
+  margin-top: 8px;
+}
+
+/* A button in a row that opens its panel through the stretched link (`.row-open`, base.css): it
+   sits above the link. */
+.row-action {
+  position: relative;
+  z-index: 1;
+  height: 24px;
+  padding-inline: 8px;
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.cal-quiet {
+  margin-top: 12px;
+}
+
+.connect-choices .muted {
+  max-width: 420px;
+}
+
+.connect-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Connect menu ---------------------------------------------------------------------------------- */
+
+.connect-menu {
+  position: fixed;
+  inset: 52px 24px auto auto;
+  min-width: 264px;
+  max-width: 300px;
+  margin: 0;
+}
+
+@supports (anchor-name: --a) {
+  .connect-trigger {
+    anchor-name: --connect;
+  }
+
+  .connect-menu {
+    position-anchor: --connect;
+    inset: auto;
+    top: calc(anchor(bottom) + 4px);
+    right: anchor(right);
+  }
+}
+
+.connect-item {
+  gap: 8px;
+  height: 32px;
+}
+
+.connect-item svg {
+  color: var(--text-2);
+}
+
+.menu-note {
+  margin: 0 0 4px;
+  padding: 0 8px 4px 32px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* Panel ----------------------------------------------------------------------------------------- */
+
+.cal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cal-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The address in a row and in the panel's state line: the provider's mark, then the address. */
+.cal-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cal-meta-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Days: seven equal segments. */
+.cal-days .seg-item {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 0;
+}
+
+/*
+ * Selected neighbours merge into one block ("Mo-Fr" reads as one range): no gap, square inner
+ * corners, and the ring is clipped on the shared side, so no edge doubles. The clip leaves 3 px
+ * above and below for the ring and the shadow. A focused day drops the clip, so its focus ring
+ * shows whole.
+ */
+.cal-days {
+  gap: 0;
+}
+
+.cal-days .seg-item:has(:checked):has(+ .seg-item :checked) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  clip-path: inset(-3px 0 -3px -3px);
+}
+
+.cal-days .seg-item:has(:checked) + .seg-item:has(:checked) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  clip-path: inset(-3px -3px -3px 0);
+}
+
+.cal-days .seg-item:has(:checked) + .seg-item:has(:checked):has(+ .seg-item :checked) {
+  clip-path: inset(-3px 0);
+}
+
+.cal-days .seg-item:has(:focus-visible) {
+  clip-path: none;
+}
+
+.cal-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-time {
+  width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-dash {
+  color: var(--text-3);
+}
+
+.cal-minutes {
+  width: 72px;
+  text-align: right;
+}
+
+.cal-unit {
+  color: var(--text-2);
+}
+
+/* The calendars of the account: a switch and the name, one per line. */
+.cal-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+}
+
+.cal-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--control-h);
+}
+
+.cal-source-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.cal-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Reload calendars" at the end of the hint, as a link. */
+.cal-reload {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  white-space: nowrap;
+}
+
+/* Phone ------------------------------------------------------------------------------------------- */
+
+@media (max-width: 719.98px) {
+  .row-status {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .cal-notices .notice {
+    flex-wrap: wrap;
+  }
+}
+
+/* The status wrapper only carries the tooltip that says what the status counts. */
+.cal-status {
+  display: contents;
+}

@@ -1,0 +1,269 @@
+/* Styles of the activity page. Tokens and the list rows: base.css. */
+
+/* The shell's content column, so that the rows end under the header's scope switch. */
+.act {
+  padding-top: 12px;
+}
+
+/* Filters --------------------------------------------------------------------------------------- */
+
+.act-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.act-field {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.act-field .select select {
+  max-width: 220px;
+}
+
+.act-applied {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  list-style: none;
+}
+
+/* A removable filter. Radius 4 like a tag, not a pill. */
+.act-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-tag);
+  color: var(--text-2);
+  font-size: 12px;
+  transition:
+    background-color var(--fast) ease-out,
+    color var(--fast) ease-out;
+}
+
+.act-chip:hover {
+  background: var(--fill-hover);
+  color: var(--text);
+}
+
+.act-chip svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* Rows ------------------------------------------------------------------------------------------ */
+
+.act-list {
+  margin-top: 8px;
+}
+
+/* Time, mark, what happened, who, how long. The time and the mark keep their column in every row.
+   Only the admin page shows durations; without them the last column holds a disclosure chevron.
+   That column keeps the chevron's width on every row, so that the "who" column does not move on
+   the rows that have one. */
+.act-row {
+  display: grid;
+  grid-template-columns: 44px 8px minmax(0, 1fr) auto minmax(16px, auto);
+  grid-template-areas: "time mark main user dur";
+  align-items: center;
+  column-gap: 12px;
+}
+
+/* The time only on the first row of a minute; later rows keep it for screen readers. */
+.act-time {
+  grid-area: time;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.act-mark {
+  grid-area: mark;
+  display: inline-flex;
+  align-items: center;
+}
+
+.act-main {
+  grid-area: main;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The route of a row as the two calendars' swatches, or one calendar. Every row keeps the slot, so
+   that the titles start in one column. */
+.act-route {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  width: 24px;
+}
+
+.act-title {
+  flex: none;
+  max-width: 100%;
+}
+
+/* The detail may shrink and cut; the title keeps its words. */
+.act-detail {
+  flex: 1 1 0;
+}
+
+.act-user {
+  grid-area: user;
+  min-width: 0;
+  width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.act-dur {
+  grid-area: dur;
+  min-width: 44px;
+  color: var(--text-3);
+  font-size: 12px;
+  text-align: right;
+}
+
+/* A row that leads somewhere, such as a run that ended without a result to its mirroring. */
+a.act-row {
+  color: inherit;
+}
+
+/* What a problem row means and what to do, under its title. It belongs to the row: the row's
+   closing hairline moves under the sentence. */
+.act-explain {
+  max-width: calc(2 * var(--gutter) + 108px + 80ch);
+  margin: 0;
+  /* Under the title: time, mark, swatch slot and their gaps. */
+  padding: 0 var(--gutter) 10px calc(var(--gutter) + 44px + 12px + 8px + 12px + 24px + 8px);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.list-item:last-child > .act-row:has(+ .act-explain) {
+  --sep-end: none;
+}
+
+.list-item:last-child:has(> .act-explain) {
+  background: linear-gradient(var(--line), var(--line)) var(--gutter) 100% /
+    calc(100% - 2 * var(--gutter)) 1px no-repeat;
+}
+
+/* Joined runs: the row is the summary of a native disclosure that lists each run. */
+.act-group > summary:hover {
+  --row-bg: var(--fill-hover);
+}
+
+/* The chevron of every disclosure, in the column of the duration, which a joined row leaves
+   empty. */
+.act-group > summary::before {
+  grid-area: dur;
+  justify-self: end;
+  margin: 0 4px 0 0;
+}
+
+.act-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  /* Under the title: the time column, the mark column and their gaps. */
+  padding: 4px var(--gutter) 10px calc(var(--gutter) + 44px + 8px + 24px);
+  list-style: none;
+}
+
+.act-run {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.act-run-time {
+  width: 44px;
+  color: var(--text-2);
+}
+
+.act-run-dur {
+  color: var(--text-3);
+}
+
+/* Footer ---------------------------------------------------------------------------------------- */
+
+.act-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.act-retention {
+  margin-top: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* Phone: the event on one line, its detail on the next. ----------------------------------------- */
+
+@media (max-width: 719.98px) {
+  .act-row {
+    grid-template-columns: 40px 8px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "time mark main dur"
+      ". . user user";
+    row-gap: 0;
+    column-gap: 10px;
+  }
+
+  .act-main {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .act-title {
+    flex: 0 1 auto;
+    white-space: normal;
+  }
+
+  .act-detail {
+    flex: 1 0 100%;
+    white-space: normal;
+  }
+
+  .act-user {
+    width: auto;
+  }
+
+  .act-runs {
+    padding-left: calc(var(--gutter) + 40px + 8px + 20px);
+  }
+
+  .act-explain {
+    padding-left: calc(var(--gutter) + 40px + 10px + 8px + 10px);
+  }
+
+  .act-field .select select {
+    max-width: none;
+  }
+
+  .act-field {
+    flex: 1 1 140px;
+  }
+
+  .act-field .select {
+    flex: 1;
+  }
+}

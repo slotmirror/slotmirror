@@ -22,15 +22,17 @@ or removes the block when the appointment changes.
 
 1. Deploy slotmirror with the [Quickstart](../../docs/quickstart/) and connect your work and your
    private account.
-2. On the **Rules** page, add both calendars to the group **Block each other**.
-3. Expand the card of the private account. Keep **As busy** for the work calendar.
-4. Under **For all calendars**, keep **Mark copies as private** on. Colleagues then see
-   "Private". You still see everything.
+2. Open the **Mirroring** page and choose **Mirror all as busy**. Each calendar then shows the
+   events of the other as busy.
+3. Open the row from the private account to the work calendar. Keep **Busy only** under **What is
+   copied**.
+4. Keep **What others see** on **Private event**. Colleagues then see a private event, or "Busy"
+   in Google Calendar. You still see everything.
 5. Choose **Save**.
 
-## Choose the title of the blocks
+## Choose the title of the copies
 
-The blocks carry the title from **Title of busy blocks**, for example "Busy" or "Blocked". The
+The copies carry the title from **Title of busy copies**, for example "Busy" or "Blocked". The
 title, the location and the attendees of the private appointment do not reach the work calendar.
 
 ## For a team
@@ -42,8 +44,9 @@ from a private account to a work account at "Busy". See [Organisations](../../do
 
 ### Can colleagues see what the appointment is?
 
-No. A block carries the title from **Title of busy blocks**, "Busy" by default. **Mark copies as
-private** is on by default, so colleagues who can open your calendar see "Private" instead.
+No. A copy carries the title from **Title of busy copies** under **For all mirrorings**, "Busy"
+by default. **What others see** is **Private event** by default, so colleagues who can open your
+calendar see a private event, or "Busy" in Google Calendar, instead.
 Colleagues who only check when you are free see that you are busy. The title, the location and
 the attendees of the appointment stay in your private calendar.
 
@@ -57,7 +60,7 @@ page of the deployment shows the contact of the operator, if the operator set on
 ### What about holidays and days off?
 
 All-day events block the whole day by default. Events that are marked as free stay out. To leave
-out all all-day events, turn on **Skip all-day events** under **For all calendars**.
+out all all-day events, turn on **Skip all-day events** under **For all mirrorings** on the **Mirroring** page.
 
 ## Related guides
 

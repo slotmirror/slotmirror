@@ -63,8 +63,15 @@ function count(html: string): number {
   return html.split(NOTICE).length - 1;
 }
 
+/** The page content. The connect links in the sidebar and the palette come before it. */
+function mainOf(html: string): string {
+  const start = html.indexOf("<main");
+  expect(start).toBeGreaterThan(-1);
+  return html.slice(start);
+}
+
 describe("operator notice at every connect entry", () => {
-  it.each(["/", "/rules"])("shows a hostile notice as text on %s", async (path) => {
+  it.each(["/", "/calendars"])("shows a hostile notice as text on %s", async (path) => {
     const { user, cookie } = await signIn("escape@org.example");
     await connectAccounts(user.id, `ops-escape${path.length}`, true);
     const notice = `<img src=x onerror=alert(1)><script>alert(1)</script>`;
@@ -74,7 +81,7 @@ describe("operator notice at every connect entry", () => {
     expect(html).toContain("&lt;img src=x");
   });
 
-  it.each(["/", "/rules"])("caps a long notice on %s", async (path) => {
+  it.each(["/", "/calendars"])("caps a long notice on %s", async (path) => {
     const { user, cookie } = await signIn("long@org.example");
     await connectAccounts(user.id, `ops-long${path.length}`, true);
     const shown = "y".repeat(MAX_OPERATOR_NOTICE - 1);
@@ -83,49 +90,46 @@ describe("operator notice at every connect entry", () => {
     expect(html).not.toContain(`${shown}y`);
   });
 
-  it("shows it once in the first steps of the rules page", async () => {
+  it("shows it once in the first steps of the Calendars page", async () => {
     const { user, cookie } = await signIn("steps@org.example");
     await connectAccounts(user.id, "ops-steps", false);
-    const html = await get("/rules", { OPERATOR_NOTICE: NOTICE }, cookie);
+    const html = await get("/calendars", { OPERATOR_NOTICE: NOTICE }, cookie);
     expect(count(html)).toBe(1);
-    expect(html.indexOf(NOTICE)).toBeLessThan(html.indexOf("/auth/microsoft/connect"));
+    expect(mainOf(html)).toContain(NOTICE);
   });
 
-  it("shows it once, before the banner and its link, on the rules page", async () => {
+  it("shows it once, next to the banner and its link, on the Calendars page", async () => {
     const { user, cookie } = await signIn("banner@org.example");
     await connectAccounts(user.id, "ops-banner", true);
-    const html = await get("/rules", { OPERATOR_NOTICE: NOTICE }, cookie);
+    const html = await get("/calendars", { OPERATOR_NOTICE: NOTICE }, cookie);
     expect(count(html)).toBe(1);
-    expect(html.indexOf(NOTICE)).toBeLessThan(html.indexOf("/auth/google/connect?account="));
+    expect(mainOf(html)).toContain(NOTICE);
+    expect(mainOf(html)).toContain("/auth/google/connect?account=");
   });
 
-  it("shows it once, before the banner, the list link and the buttons, on the home page", async () => {
+  it("shows it once, next to the banner and the buttons, on the Overview", async () => {
     const { user, cookie } = await signIn("home@org.example");
     await connectAccounts(user.id, "ops-home", true, 2);
     const html = await get("/", { OPERATOR_NOTICE: NOTICE }, cookie);
     expect(count(html)).toBe(1);
-    const first = html.indexOf("/auth/google/connect");
-    expect(first).toBeGreaterThan(-1);
-    expect(html.indexOf(NOTICE)).toBeLessThan(first);
+    expect(mainOf(html)).toContain(NOTICE);
+    expect(mainOf(html)).toContain("/auth/google/connect");
   });
 
   it("shows nothing at those entries when the value is empty", async () => {
     const { user, cookie } = await signIn("none@org.example");
     await connectAccounts(user.id, "ops-none", true);
-    for (const path of ["/", "/rules"]) {
+    for (const path of ["/", "/calendars"]) {
       expect(await get(path, { OPERATOR_NOTICE: "" }, cookie)).not.toContain("operator-notice");
     }
   });
 });
 
 describe("operator notice pages", () => {
-  it("shows the notice before the connect buttons", async () => {
+  it("shows the notice on the Overview of a user without accounts", async () => {
     const { cookie } = await signIn("owner@example.com");
     const html = await get("/", { OPERATOR_NOTICE: NOTICE }, cookie);
-    const notice = html.indexOf(NOTICE);
-    const connect = html.indexOf("/auth/microsoft/connect");
-    expect(notice).toBeGreaterThan(-1);
-    expect(connect).toBeGreaterThan(notice);
+    expect(mainOf(html)).toContain(NOTICE);
   });
 
   it("shows the notice on the privacy page", async () => {
