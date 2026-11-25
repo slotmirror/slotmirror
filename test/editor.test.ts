@@ -643,6 +643,456 @@ describe("opt-in categories", () => {
   });
 });
 
+describe("carried categories", () => {
+  type Pair = { from: string; to: string; tentative?: boolean };
+
+  async function passOf(calendar: string, target = "%"): Promise<Pair[] | undefined> {
+    const row = await env.DB.prepare(
+      "SELECT options FROM rules WHERE source_calendar_id = ? AND target_calendar_id LIKE ?",
+    )
+      .bind(calendar, target)
+      .first<{ options: string }>();
+    return (JSON.parse(row?.options ?? "{}") as { passCategories?: Pair[] }).passCategories;
+  }
+
+  /** The batch path: every change of a page in one request. */
+  function saveAll(cookie: string, fields: Record<string, string>) {
+    return exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields),
+    });
+  }
+
+  /** The details of one direction as a form without script sends them. */
+  function saveWithoutScript(cookie: string, body: URLSearchParams) {
+    return exports.default.fetch(`${BASE}/rules/direction/details`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  }
+
+  /** The details form of one direction with rows of "passFrom" and "passTo", in their order. */
+  function rowsForm(from: string, to: string, rows: [string, string][]) {
+    const body = new URLSearchParams({ from, to, passCategoriesShown: "1" });
+    for (const [source, target] of rows) {
+      body.append("passFrom", source);
+      body.append("passTo", target);
+    }
+    return body;
+  }
+
+  const wire = (pairs: string[][]) => JSON.stringify(pairs);
+
+  it("keeps two names for one colour from Google to Outlook", async () => {
+    const { user, cookie, w, o, g } = await setup("passmany");
+    await setDirection(env, user, g, o, "busy");
+    const response = await saveAll(cookie, {
+      [`passCategories.${g}.${o}`]: wire([
+        ["color:5", "Work"],
+        ["color:5", "Client"],
+      ]),
+    });
+    expect(response.status).toBe(204);
+    expect(await passOf(`${g}-cal`, `${o}-cal`)).toEqual([
+      { from: "color:5", to: "Work", tentative: false },
+      { from: "color:5", to: "Client", tentative: false },
+    ]);
+  });
+
+  it("keeps the first row of a repeated name between calendars of one provider", async () => {
+    // The panel shows such a direction as one list of names, so a second row for one name would
+    // be lost at the next save of any other field.
+    const { user, cookie, w, o } = await setup("passonename");
+    await setDirection(env, user, w, o, "busy");
+    const response = await saveAll(cookie, {
+      [`passCategories.${w}.${o}`]: wire([
+        ["Focus", "Deep work"],
+        ["focus", "Travel"],
+      ]),
+    });
+    expect(response.status).toBe(204);
+    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([
+      { from: "Focus", to: "Deep work", tentative: false },
+    ]);
+  });
+
+  it("stores trimmed pairs of one direction from the batch, a repeated pair is dropped", async () => {
+    const { user, cookie, w, o, g } = await setup("passbatch");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, o, g, "busy");
+    const response = await saveAll(cookie, {
+      [`passCategories.${w}.${g}`]: wire([
+        [" Focus ", "3"],
+        ["focus", " 3"],
+        ["", "7"],
+        ["Deep", "11"],
+      ]),
+    });
+    expect(response.status).toBe(204);
+    expect(await passOf(`${w}-cal`)).toEqual([
+      { from: "Focus", to: "3", tentative: false },
+      { from: "Deep", to: "11", tentative: false },
+    ]);
+    expect(await passOf(`${o}-cal`)).toEqual([]);
+  });
+
+  it("allows an empty target only between calendars of one provider", async () => {
+    const { user, cookie, w, o, g } = await setup("passsame");
+    await setDirection(env, user, w, o, "busy");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, g, w, "busy");
+    expect(
+      (
+        await saveAll(cookie, {
+          [`passCategories.${w}.${o}`]: wire([["Focus", ""]]),
+        })
+      ).status,
+    ).toBe(204);
+    expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([
+      { from: "Focus", to: "", tentative: false },
+    ]);
+    for (const [from, to, pair] of [
+      [w, g, ["Focus", ""]],
+      [g, w, ["color:3", ""]],
+    ] as const) {
+      const response = await saveAll(cookie, {
+        [`passCategories.${from}.${to}`]: wire([[...pair]]),
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("refuses the whole save for an invalid pair", async () => {
+    const { user, cookie, w, g } = await setup("passrefused");
+    await setDirection(env, user, w, g, "busy");
+    await setDirection(env, user, g, w, "busy");
+    const valid = { [`passCategories.${w}.${g}`]: wire([["Focus", "3"]]) };
+    const bad: [string, string][] = [
+      [`passCategories.${g}.${w}`, wire([["Focus", "Focus"]])], // Google source needs a colour
+      [`passCategories.${g}.${w}`, wire([["color:12", "Focus"]])],
+      [`passCategories.${g}.${w}`, wire([["color:3", "a,b"]])], // comma in an Outlook name
+      [`passCategories.${g}.${w}`, wire([["color:3", ""]])], // no target name
+      [`passCategories.${w}.${g}`, wire([["a,b", "3"]])],
+      [`passCategories.${w}.${g}`, wire([["x".repeat(101), "3"]])],
+      [`passCategories.${w}.${g}`, wire([["Focus", "12"]])], // not a Google colour
+      [`passCategories.${w}.${g}`, wire([["Focus", "Blue"]])],
+      [`passCategories.${w}.${g}`, "not json"],
+      [`passCategories.${w}.${g}`, JSON.stringify([["Focus"]])],
+      [`passCategories.${w}.${g}`, wire(Array.from({ length: 51 }, (_, i) => [`c${i}`, "3"]))],
+    ];
+    for (const [name, value] of bad) {
+      const response = await saveAll(cookie, { ...valid, [name]: value });
+      expect(response.status, `${name}=${value}`).toBe(400);
+    }
+    expect(await passOf(`${w}-cal`)).toEqual([]);
+    expect(await passOf(`${g}-cal`)).toEqual([]);
+  });
+
+  it("refuses a list for a direction that does not exist", async () => {
+    const { user, cookie, w, g } = await setup("passgone");
+    await setDirection(env, user, w, g, "busy");
+    const response = await saveAll(cookie, {
+      [`passCategories.${w}.no-such-account`]: wire([["Focus", "3"]]),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("stores rows from the form without the script, Outlook to Google", async () => {
+    const { user, cookie, w, g } = await setup("passojs");
+    await setDirection(env, user, w, g, "busy");
+    const body = rowsForm(w, g, [
+      ["Focus", "3"],
+      [" Reise; privat", "6"],
+      ["", ""], // the empty row
+    ]);
+    expect((await saveWithoutScript(cookie, body)).status).toBe(302);
+    expect(await passOf(`${w}-cal`)).toEqual([
+      { from: "Focus", to: "3", tentative: false },
+      { from: "Reise; privat", to: "6", tentative: false },
+    ]);
+  });
+
+  it("drops a row whose name is cleared, and refuses a name without a colour", async () => {
+    const { user, cookie, w, g } = await setup("passclear");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, {
+      [`passCategories.${w}.${g}`]: wire([["Focus", "3"]]),
+    });
+    expect((await saveWithoutScript(cookie, rowsForm(w, g, [["", "3"]]))).status).toBe(302);
+    expect(await passOf(`${w}-cal`)).toEqual([]);
+    expect((await saveWithoutScript(cookie, rowsForm(w, g, [["Focus", ""]]))).status).toBe(400);
+    expect(await passOf(`${w}-cal`)).toEqual([]);
+  });
+
+  it("stores rows from the form without the script, Google to Outlook", async () => {
+    const { user, cookie, w, g } = await setup("passgjs");
+    await setDirection(env, user, g, w, "busy");
+    const body = rowsForm(g, w, [
+      ["color:5", "Focus"],
+      ["", ""], // the empty row has no colour and no name
+    ]);
+    expect((await saveWithoutScript(cookie, body)).status).toBe(302);
+    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus", tentative: false }]);
+  });
+
+  it("stores a name list between Outlook calendars and colours between Google calendars", async () => {
+    const { user, cookie, w, o } = await setup("passkinds");
+    // A second Google account for a Google to Google direction.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES (?, ?, ?, ?)",
+      ).bind("passkinds-g2", user.id, "google", "passkinds2@gmail.com"),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Main', 1, 1, 1)",
+      ).bind("passkinds-g2-cal", "passkinds-g2", "passkinds-g2-remote"),
+    ]);
+    await env.ACCOUNT_SYNC.getByName("passkinds-g2").storeTokens(
+      "passkinds-g2",
+      {
+        refreshToken: "r",
+        accessToken: "a",
+        accessExpiresAt: Date.now() + 3_600_000,
+      },
+      "google",
+    );
+    const g = "passkinds-g";
+    await setDirection(env, user, w, o, "busy");
+    await setDirection(env, user, g, "passkinds-g2", "busy");
+    const names = new URLSearchParams({
+      from: w,
+      to: o,
+      passCategoriesShown: "1",
+    });
+    names.append("passCategories", "Focus, Deep,, focus");
+    await saveWithoutScript(cookie, names);
+    expect(await passOf(`${w}-cal`)).toEqual([
+      { from: "Focus", to: "", tentative: false },
+      { from: "Deep", to: "", tentative: false },
+    ]);
+    const colours = new URLSearchParams({
+      from: g,
+      to: "passkinds-g2",
+      passCategoriesShown: "1",
+    });
+    colours.append("passColor", "color:5");
+    colours.append("passColor", "color:11");
+    await saveWithoutScript(cookie, colours);
+    expect(await passOf(`${g}-cal`)).toEqual([
+      { from: "color:5", to: "", tentative: false },
+      { from: "color:11", to: "", tentative: false },
+    ]);
+  });
+
+  it("keeps the list if a page from before the option saves its details", async () => {
+    const { user, cookie, w, g } = await setup("passstale");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, {
+      [`passCategories.${w}.${g}`]: wire([["Focus", "3"]]),
+    });
+    await saveWithoutScript(cookie, new URLSearchParams({ from: w, to: g, blockColor: "3" }));
+    await saveAll(cookie, { [`blockColor.${w}.${g}`]: "5" });
+    expect(await passOf(`${w}-cal`)).toEqual([{ from: "Focus", to: "3", tentative: false }]);
+  });
+
+  it("logs the count of pairs, not the names", async () => {
+    const { user, cookie, w, g } = await setup("passaudit");
+    await setDirection(env, user, w, g, "busy");
+    await saveAll(cookie, {
+      [`passCategories.${w}.${g}`]: wire([
+        ["Geheimkunde", "3"],
+        ["Zweite", "4"],
+      ]),
+    });
+    const row = await env.DB.prepare(
+      "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'rule_updated' ORDER BY id DESC",
+    )
+      .bind(user.id)
+      .first<{ detail: string }>();
+    expect(JSON.parse(row?.detail ?? "{}")).toMatchObject({ passCategories: "2" });
+    expect(row?.detail).not.toContain("Geheimkunde");
+    expect(row?.detail).not.toContain("Zweite");
+  });
+
+  it("clears the list when a direction is reset to the group", async () => {
+    const { user, cookie, w, g } = await setup("passreset");
+    await setGroupMembership(env, user, w, true);
+    await setGroupMembership(env, user, g, true);
+    await setDirection(env, user, w, g, "title");
+    await saveAll(cookie, { [`passCategories.${w}.${g}`]: wire([["Focus", "3"]]) });
+    expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([
+      { from: "Focus", to: "3", tentative: false },
+    ]);
+
+    await resetDirection(env, user, w, g);
+    const state = await loadEditorState(env, user.id);
+    const direction = state.directions.find((d) => d.from === w && d.to === g);
+    expect(direction).toMatchObject({ choice: "busy", origin: "group" });
+    expect(direction?.options?.passCategories).toEqual([]);
+  });
+
+  it("refuses the same name list with and without the script", async () => {
+    const { user, cookie, w, o } = await setup("passparity");
+    await setDirection(env, user, w, o, "busy");
+    const long = "x".repeat(101);
+    const many = Array.from({ length: 51 }, (_, index) => `Name ${index}`);
+    for (const names of [[long], many]) {
+      const scripted = await saveAll(cookie, {
+        [`passCategories.${w}.${o}`]: wire(names.map((name) => [name, ""])),
+      });
+      expect(scripted.status).toBe(400);
+      const body = new URLSearchParams({ from: w, to: o, passCategoriesShown: "1" });
+      body.append("passCategories", names.join(", "));
+      expect((await saveWithoutScript(cookie, body)).status).toBe(400);
+      expect(await passOf(`${w}-cal`)).toEqual([]);
+    }
+  });
+
+  it("refuses a name without a colour from Google to Outlook, on both paths", async () => {
+    const { user, cookie, w, g } = await setup("passnocolor");
+    await setDirection(env, user, g, w, "busy");
+    await saveAll(cookie, { [`passCategories.${g}.${w}`]: wire([["color:5", "Focus"]]) });
+    const scripted = await saveAll(cookie, {
+      [`passCategories.${g}.${w}`]: wire([["", "Deep"]]),
+    });
+    expect(scripted.status).toBe(400);
+    expect((await saveWithoutScript(cookie, rowsForm(g, w, [["", "Deep"]]))).status).toBe(400);
+    expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:5", to: "Focus", tentative: false }]);
+  });
+
+  describe("tentative copies", () => {
+    /** The no-script form with rows and the indexes of the ticked "Tentative" boxes. */
+    function tentativeForm(from: string, to: string, rows: [string, string][], ticked: number[]) {
+      const body = rowsForm(from, to, rows);
+      for (const index of ticked) body.append("passTentative", String(index));
+      return body;
+    }
+
+    it("stores triples from Google to Outlook and still takes pairs", async () => {
+      const { user, cookie, w, g } = await setup("tentbatch");
+      await setDirection(env, user, g, w, "busy");
+      const response = await saveAll(cookie, {
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          ["color:5", "Focus", true],
+          ["color:6", "Deep", false],
+          ["color:7", "Travel"],
+        ]),
+      });
+      expect(response.status).toBe(204);
+      expect(await passOf(`${g}-cal`)).toEqual([
+        { from: "color:5", to: "Focus", tentative: true },
+        { from: "color:6", to: "Deep", tentative: false },
+        { from: "color:7", to: "Travel", tentative: false },
+      ]);
+    });
+
+    it("refuses a tentative row for every other direction, and a third value that is no boolean", async () => {
+      const { user, cookie, w, o, g } = await setup("tentdir");
+      await setDirection(env, user, w, g, "busy");
+      await setDirection(env, user, w, o, "busy");
+      await setDirection(env, user, g, w, "busy");
+      const bad: [string, unknown[][]][] = [
+        [`passCategories.${w}.${g}`, [["Focus", "3", true]]],
+        [`passCategories.${w}.${o}`, [["Focus", "", true]]],
+        [`passCategories.${g}.${w}`, [["color:5", "Focus", "yes"]]],
+        [`passCategories.${g}.${w}`, [["color:5", "Focus", true, true]]],
+      ];
+      for (const [name, value] of bad) {
+        const response = await saveAll(cookie, { [name]: JSON.stringify(value) });
+        expect(response.status, `${name}=${JSON.stringify(value)}`).toBe(400);
+      }
+      expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([]);
+      expect(await passOf(`${w}-cal`, `${o}-cal`)).toEqual([]);
+      expect(await passOf(`${g}-cal`)).toEqual([]);
+      // A false mark is the plain row, which fits every direction.
+      expect(
+        (await saveAll(cookie, { [`passCategories.${w}.${g}`]: '[["Focus", "3", false]]' })).status,
+      ).toBe(204);
+      expect(await passOf(`${w}-cal`, `${g}-cal`)).toEqual([
+        { from: "Focus", to: "3", tentative: false },
+      ]);
+    });
+
+    it("keeps the first row of a repeated pair with another mark", async () => {
+      const { user, cookie, w, g } = await setup("tentrepeat");
+      await setDirection(env, user, g, w, "busy");
+      for (const [first, second] of [
+        [true, false],
+        [false, true],
+      ]) {
+        const response = await saveAll(cookie, {
+          [`passCategories.${g}.${w}`]: JSON.stringify([
+            ["color:5", "Focus", first],
+            ["color:5", "focus", second],
+          ]),
+        });
+        expect(response.status).toBe(204);
+        expect(await passOf(`${g}-cal`)).toEqual([
+          { from: "color:5", to: "Focus", tentative: first },
+        ]);
+      }
+    });
+
+    it("maps each ticked box of the form without the script to its row", async () => {
+      const { user, cookie, w, g } = await setup("tentform");
+      await setDirection(env, user, g, w, "busy");
+      const rows: [string, string][] = [
+        ["color:5", "Focus"],
+        ["color:6", "Deep"],
+        ["", ""],
+      ];
+      // The empty row is ticked too: a row without a name is no row, whatever its box says.
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, rows, [1, 2]))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([
+        { from: "color:5", to: "Focus", tentative: false },
+        { from: "color:6", to: "Deep", tentative: true },
+      ]);
+      // A cleared first row does not move the box of the second one.
+      const cleared: [string, string][] = [
+        ["color:5", ""],
+        ["color:6", "Deep"],
+      ];
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, cleared, [1]))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:6", to: "Deep", tentative: true }]);
+      // An unticked box clears the mark.
+      expect((await saveWithoutScript(cookie, tentativeForm(g, w, cleared, []))).status).toBe(302);
+      expect(await passOf(`${g}-cal`)).toEqual([{ from: "color:6", to: "Deep", tentative: false }]);
+    });
+
+    it("refuses a ticked box from Outlook to Google on both paths", async () => {
+      const { user, cookie, w, g } = await setup("tentparity");
+      await setDirection(env, user, w, g, "busy");
+      const scripted = await saveAll(cookie, {
+        [`passCategories.${w}.${g}`]: JSON.stringify([["Focus", "3", true]]),
+      });
+      expect(scripted.status).toBe(400);
+      const plain = await saveWithoutScript(cookie, tentativeForm(w, g, [["Focus", "3"]], [0]));
+      expect(plain.status).toBe(400);
+      expect(await passOf(`${w}-cal`)).toEqual([]);
+    });
+
+    it("logs the count when only a mark changes, not the names", async () => {
+      const { user, cookie, w, g } = await setup("tentaudit");
+      await setDirection(env, user, g, w, "busy");
+      await saveAll(cookie, { [`passCategories.${g}.${w}`]: '[["color:5", "Geheimkunde"]]' });
+      await saveAll(cookie, {
+        [`passCategories.${g}.${w}`]: '[["color:5", "Geheimkunde", true]]',
+      });
+      const { results } = await env.DB.prepare(
+        "SELECT detail FROM audit_events WHERE user_id = ? AND kind = 'rule_updated' ORDER BY id DESC",
+      )
+        .bind(user.id)
+        .all<{ detail: string }>();
+      expect(results).toHaveLength(2);
+      expect(JSON.parse(results[0]?.detail ?? "{}")).toMatchObject({ passCategories: "1" });
+      expect(results[0]?.detail).not.toContain("Geheimkunde");
+    });
+  });
+});
+
 describe("reconnect", () => {
   it("clears the flag when the account is connected again", async () => {
     const { user, w } = await setup("reconnect");
@@ -733,7 +1183,11 @@ describe("block buffer per source", () => {
     exports.default.fetch(`${BASE}/rules/choices`, {
       method: "POST",
       redirect: "manual",
-      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        cookie,
+        "x-fragment": "1",
+        "content-type": "application/x-www-form-urlencoded",
+      },
       body: new URLSearchParams(fields),
     });
   it("saves one buffer for every rule of a source from the page, and refuses invalid values", async () => {

@@ -464,30 +464,17 @@ svg {
   overflow: hidden;
 }
 
+/*
+ * The frame fills the window to the right edge, with the panel open or not. The pane takes the
+ * free space and the detail panel keeps its width, so the panel docks at the right edge of the
+ * frame, as in Linear. The list keeps its width (`--content-max`) and stays anchored left through
+ * `.content`. The Overview (`is-wide`) sizes its own column.
+ */
 .workspace {
   display: flex;
   flex: 1;
   min-width: 0;
   height: 100%;
-  /* Anchored left: the page header and list keep their x when the detail panel opens. */
-  margin-inline: 0 auto;
-}
-
-/* List plus panel stay one unit (1520 px by default): on a wide screen the panel opens next to the
-   list, not a screen width away from the row that opened it. */
-.frame.has-panel .workspace {
-  max-width: calc(var(--content-max) + var(--panel-w));
-}
-
-/*
- * On a wide screen the main panel ends where list plus panel end (1520 px and its border), with
- * the panel open or not: the panel never ends in empty surface, and opening it moves no edge. The
- * chrome shows to the right, as around the sidebar. Docking the panel at the right edge instead
- * would put it up to 800 px away from the row that opened it. The Overview (`is-wide`) sizes its
- * own column and keeps the full width.
- */
-.frame:not(.is-wide) {
-  max-width: calc(var(--content-max) + var(--panel-w) + 2px);
 }
 
 .pane {
@@ -586,8 +573,6 @@ svg {
   min-height: 0;
   border-left: 1px solid var(--line);
   background: var(--surface);
-  /* Its right edge when space follows it; at the frame's edge the frame clips it. */
-  box-shadow: 1px 0 0 var(--line);
 }
 
 .detail-head {

@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" width="760" alt="The previous interface: events from Work go to Personal with every detail and in a chosen Google colour, then the change is saved">
+  <img src="docs/images/demo.gif" width="760" alt="On the Mirroring page, the mirroring from Work to Personal changes to Everything and gets a Google colour, then the change is saved">
 </p>
 
 Keep several calendars in sync, so that nobody books you twice. slotmirror copies your events
@@ -35,7 +35,7 @@ connect an account.
 > **Status: early.** The author uses it every day for three calendars. The version is below 1.0,
 > so settings and the database can still change between releases.
 
-![The previous interface: one card per calendar, and an overview of all directions](docs/images/editor.png)
+![The Mirroring page: every direction grouped by the calendar it appears in, with the panel of one mirroring open](docs/images/editor.png)
 
 ## What it does
 
@@ -117,20 +117,17 @@ above. The code of the waitlist Worker is in
 
 ## Screens
 
-The screenshots in this section show the previous interface.
+| Calendars                                        | Settings for all mirrorings                              |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| ![Connected calendars](docs/images/accounts.png) | ![Settings for all mirrorings](docs/images/settings.png) |
 
-| Accounts                                        | Settings for all calendars                 |
-| ----------------------------------------------- | ------------------------------------------ |
-| ![Connected accounts](docs/images/accounts.png) | ![Sync settings](docs/images/settings.png) |
-
-![A source card with several calendars of one account](docs/images/source-calendars.png)
+![The panel of one account with several calendars to copy from](docs/images/source-calendars.png)
 
 ## UI changed
 
 This release replaces the interface. The Overview is the start page, and Mirroring, Calendars,
 Activity, API tokens and Admin are pages of their own, with a command palette (`Ctrl+K` or
-`Cmd+K`) and a panel for details. The screenshots above still show the previous
-interface.
+`Cmd+K`) and a panel for details.
 
 - The pages have short addresses: `/` (Overview), `/mirroring`, `/calendars`, `/activity`,
   `/tokens` and `/admin`. The page `/tokens` exists only when `MCP_ENABLED=1`. The preview addresses below `/next` answer with a permanent redirect to

@@ -10,7 +10,11 @@ import {
   type EditorState,
   type Level,
   levelOf,
+  canPassTentative,
+  passCategoriesFor,
+  type PassPair,
 } from "../../editor";
+import { passPairsFromForm } from "../../form";
 import { useI18n } from "../../i18n";
 import type { MirroringField } from "../../next-mirroring";
 import { directionVersion, settingsVersion } from "../../versions";
@@ -227,7 +231,9 @@ export function directionChanges(
     hoursShown: boolean;
     onlyCategories: readonly string[];
     sourceIsGoogle: boolean;
+    targetIsGoogle: boolean;
     blockColor: string;
+    passCategories: readonly PassPair[];
   },
 ): { count: number; fields: string[] } {
   const text = (name: string) => {
@@ -254,8 +260,53 @@ export function directionChanges(
         ? ["onlyCategories"]
         : [],
     text("blockColor") !== stored.blockColor ? ["blockColor"] : [],
+    ...passChanges(draft, stored),
   ].filter((fields) => fields.length > 0);
   return { count: changes.length, fields: changes.flat() };
+}
+
+/**
+ * The changes of the carried categories in a refused form, as `panel.js` counts them: the list of
+ * one provider is one change; between providers each of the two fields of the rows is one, and the
+ * "Tentative" switches of the rows are one.
+ */
+function passChanges(
+  draft: FormData,
+  stored: {
+    sourceIsGoogle: boolean;
+    targetIsGoogle: boolean;
+    passCategories: readonly PassPair[];
+  },
+): string[][] {
+  if (!draft.has("passCategoriesShown")) return [];
+  const source = stored.sourceIsGoogle ? "google" : "microsoft";
+  const target = stored.targetIsGoogle ? "google" : "microsoft";
+  const pairs = passPairsFromForm(draft, source, target);
+  const differs = (side: "from" | "to") =>
+    pairs.map((pair) => pair[side]).join("\n") !==
+    stored.passCategories.map((pair) => pair[side]).join("\n");
+  if (source === target && source === "google") {
+    // The boxes are one change, in any order, as for the filter.
+    const chosen = pairs.map((pair) => pair.from);
+    const saved = stored.passCategories.map((pair) => pair.from);
+    const same = chosen.length === saved.length && chosen.every((value) => saved.includes(value));
+    return same ? [] : [["passColor"]];
+  }
+  if (source === target) return differs("from") ? [["passCategories"]] : [];
+  const changes = [differs("from") ? ["passFrom"] : [], differs("to") ? ["passTo"] : []];
+  if (!canPassTentative(source, target)) return changes;
+  // A switch sends the index of its row, and the panel draws the stored rows in their order, so
+  // the ticked indexes compare with the stored rows that have the mark. An added row is unticked.
+  const ticked = draft
+    .getAll("passTentative")
+    .filter((value) => typeof value === "string")
+    .sort()
+    .join();
+  const saved = stored.passCategories
+    .flatMap((pair, index) => (pair.tentative ? [String(index)] : []))
+    .sort()
+    .join();
+  return [...changes, ticked !== saved ? ["passTentative"] : []];
 }
 
 // List ---------------------------------------------------------------------------------------------
@@ -675,6 +726,225 @@ function ColorRadios(props: {
   );
 }
 
+/** An arrow from the source value to the target value of a row. Decorative. */
+function RowArrow() {
+  return (
+    <svg
+      class="mx-pass-arrow"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/**
+ * The categories that the copies carry from their events. Between two calendars of one provider
+ * the list holds the source values, as the filter does: names for Outlook, ticked colours for
+ * Google. Between providers each row pairs a source value with a target value: a name and a
+ * Google colour. The rows send "passFrom" and "passTo" in their order (see `passPairsFromForm`).
+ * From Google to Outlook each row also has a "Tentative" switch, which sends the index of its row
+ * as "passTentative". The server renders the saved rows and one empty row, which works without
+ * script; the script adds more rows (`mirroring.js`).
+ */
+function PassCategories(props: {
+  from: EditorAccount;
+  to: EditorAccount;
+  fields: Fields;
+  stored: readonly PassPair[];
+  error?: string;
+}) {
+  const { t } = useI18n();
+  const text = t.next.mirroring.pass;
+  const { from, to, fields, stored, error } = props;
+  const invalid = error !== undefined;
+  const sourceIsGoogle = from.provider === "google";
+  const shown = <input type="hidden" name="passCategoriesShown" value="1" />;
+  if (from.provider === to.provider) {
+    const values = stored.map((pair) => pair.from);
+    return sourceIsGoogle ? (
+      <PropertyRow
+        label={text.colors}
+        group="mx-pass"
+        stacked
+        fields={["passColor"]}
+        error={error}
+        hint={text.colorsHint}
+      >
+        {shown}
+        <ColorChecks
+          name="passColor"
+          id="mx-pass"
+          hint
+          invalid={invalid}
+          chosen={fields.all("passColor", values)}
+        />
+      </PropertyRow>
+    ) : (
+      <PropertyRow
+        label={text.categories}
+        for="mx-pass"
+        fields={["passCategories"]}
+        error={error}
+        hint={text.categoriesHint}
+      >
+        {shown}
+        <input
+          class="input"
+          id="mx-pass"
+          type="text"
+          name="passCategories"
+          autocomplete="off"
+          placeholder={text.placeholder}
+          {...describedBy("mx-pass", { hint: true, invalid })}
+          value={fields.text("passCategories", values.join(", "))}
+        />
+      </PropertyRow>
+    );
+  }
+  // A refused form keeps its rows; an empty row follows the last one with a name.
+  const froms = fields.all("passFrom", [...stored.map((pair) => pair.from), ""]);
+  const tos = fields.all("passTo", [...stored.map((pair) => pair.to), ""]);
+  const ticked = new Set(
+    fields.all(
+      "passTentative",
+      stored.flatMap((pair, index) => (pair.tentative ? [String(index)] : [])),
+    ),
+  );
+  const rows = Array.from({ length: Math.max(froms.length, tos.length) }, (_, index) => ({
+    from: froms[index] ?? "",
+    to: tos[index] ?? "",
+    tentative: ticked.has(String(index)),
+  }));
+  const last = rows.at(-1);
+  if (!last || (sourceIsGoogle ? last.to : last.from).trim() !== "")
+    rows.push({ from: "", to: "", tentative: false });
+  // Only Outlook shows a tentative copy, and only a Google event lacks the status of its own.
+  const withTentative = canPassTentative(from.provider, to.provider);
+  // After a refusal, the rows that do not fit on their own are marked; a list that is only too long
+  // marks none, and the reason stands under the rows. A row without a name is blank, as on save.
+  const rowInvalid = (row: PassPair) =>
+    invalid &&
+    (sourceIsGoogle ? row.to : row.from).trim() !== "" &&
+    "problem" in passCategoriesFor(from.provider, to.provider, [row]);
+  const name = (
+    field: "passFrom" | "passTo",
+    value: string,
+    calendar: EditorAccount,
+    marked: boolean,
+  ) => (
+    <input
+      class="input"
+      type="text"
+      name={field}
+      autocomplete="off"
+      maxlength={MAX_CATEGORY_LENGTH}
+      placeholder={text.placeholder}
+      aria-label={text.category(calendar.name)}
+      aria-invalid={marked ? "true" : undefined}
+      value={value}
+    />
+  );
+  const color = (
+    field: "passFrom" | "passTo",
+    value: string,
+    prefix: string,
+    calendar: EditorAccount,
+    marked: boolean,
+  ) => (
+    <span class="select">
+      <select
+        name={field}
+        aria-label={text.color(calendar.name)}
+        aria-invalid={marked ? "true" : undefined}
+      >
+        <option value="" selected={value === ""}>
+          {text.chooseColor}
+        </option>
+        {GOOGLE_COLORS.map((option) => (
+          <option value={`${prefix}${option.id}`} selected={value === `${prefix}${option.id}`}>
+            {t.editor.googleColor(option.id)}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+  return (
+    <PropertyRow
+      label={sourceIsGoogle ? text.colors : text.categories}
+      group="mx-pass"
+      stacked
+      fields={withTentative ? ["passFrom", "passTo", "passTentative"] : ["passFrom", "passTo"]}
+      error={error}
+      hint={
+        withTentative ? (
+          <>
+            {text.rowsHintColors} {text.tentativeHint}
+          </>
+        ) : sourceIsGoogle ? (
+          text.rowsHintColors
+        ) : (
+          text.rowsHint
+        )
+      }
+    >
+      {shown}
+      {/* One caption over the switches instead of a text in each row, so that the two fields of
+          a row keep their width. Each switch has the caption in its own name. */}
+      {withTentative ? (
+        <div class="mx-pass-head" aria-hidden="true">
+          {text.tentative}
+        </div>
+      ) : null}
+      {/* The switches of the rows count as one change in the save bar, as the server counts
+          them (`passChanges`); the other fields count one per name anyway. */}
+      <div
+        class={withTentative ? "mx-pass-rows has-tentative" : "mx-pass-rows"}
+        role="group"
+        aria-labelledby={labelId("mx-pass")}
+        {...describedBy("mx-pass", { hint: true, invalid })}
+        data-change-group={withTentative ? "passRows" : undefined}
+      >
+        {rows.map((row, index) => {
+          const marked = rowInvalid(row);
+          return (
+            <div class="mx-pass-row">
+              {sourceIsGoogle
+                ? color("passFrom", row.from, "color:", from, marked)
+                : name("passFrom", row.from, from, marked)}
+              <RowArrow />
+              {sourceIsGoogle
+                ? name("passTo", row.to, to, marked)
+                : color("passTo", row.to, "", to, marked)}
+              {withTentative ? (
+                // The value is the row index: an unticked box sends nothing, so a ticked one must
+                // name its row (see `passPairsFromForm`).
+                <Switch
+                  name="passTentative"
+                  value={String(index)}
+                  label={text.tentativeIn(to.name)}
+                  checked={row.tentative}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" class="btn btn-secondary" data-needs-script data-pass-add>
+        {text.addRow}
+      </button>
+    </PropertyRow>
+  );
+}
+
 /**
  * The level mark in the panel title. One mark per level, and CSS shows the one that the two
  * questions name, so the title follows the form also without script.
@@ -864,7 +1134,9 @@ function DirectionPanel(
         hoursShown: hours !== null,
         onlyCategories: onlyNames,
         sourceIsGoogle,
+        targetIsGoogle,
         blockColor: options?.blockColor ?? "",
+        passCategories: options?.passCategories ?? [],
       })
     : undefined;
 
@@ -1156,6 +1428,13 @@ function DirectionPanel(
               />
             )}
           </PropertyRow>
+          <PassCategories
+            from={from}
+            to={to}
+            fields={fields}
+            stored={options?.passCategories ?? []}
+            error={errorAt("passCategories")}
+          />
         </Section>
       </div>
     </Panel>

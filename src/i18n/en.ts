@@ -142,6 +142,19 @@ export const en = {
       "Google events have colours, not categories. Choose colours instead. Nothing was saved.",
     onlyCategoriesDirection:
       "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
+    passCategoriesFrom:
+      "A category to carry does not fit the source calendar: Google events have colours, Outlook names have no comma and at most 100 characters. Nothing was saved.",
+    passCategoriesTo:
+      "A target category or colour does not fit the target calendar: Google needs a colour from 1 to 11, an Outlook name has no comma and at most 100 characters. Nothing was saved.",
+    passCategoriesIncomplete:
+      "Between a Google and an Outlook calendar, every row needs a name and a colour. Nothing was saved.",
+    passCategoriesTooMany: (max: number) =>
+      `A direction carries at most ${max} categories. Nothing was saved.`,
+    passCategoriesInvalid: "The list of categories to carry could not be read. Nothing was saved.",
+    passCategoriesTentative:
+      "Only a mirroring from Google to Outlook can show its copies as tentative. Nothing was saved.",
+    passCategoriesDirection:
+      "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
     skipCategoriesLabel: "Skip events with these categories",
     skipCategoriesHint:
       "Events with one of these Outlook categories are not copied. Upper and lower case do not matter.",

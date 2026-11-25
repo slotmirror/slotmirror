@@ -149,6 +149,43 @@ export const mirroringEn = {
     categoryPlaceholder: "None set",
   },
   /**
+   * The categories or colours that a copy carries from its event, under "Look of the copies".
+   * Nothing passes unless it is listed, because a category name or a colour can give away what an
+   * event is about.
+   */
+  pass: {
+    /** Labels in the property grid: the source's categories (Outlook) or colours (Google). */
+    categories: "Carry categories",
+    colors: "Carry colours",
+    categoriesHint:
+      "A copy carries each of these categories that its event has. No other category passes, because a name can give away what an event is about. Separate names with commas.",
+    colorsHint:
+      "A copy carries the colour of its event if it is chosen here. No other colour passes, because a colour can give away what an event is about.",
+    /** Outlook to Google: each row gives a category of the source a colour in the target. */
+    rowsHint:
+      "A copy of an event with a listed category gets the colour of its row; the first matching row wins over the colour of the copies. Nothing else passes. Clear a name to remove its row.",
+    /** Google to Outlook: each row gives a colour of the source a category in the target. */
+    rowsHintColors:
+      "A copy of an event in a listed colour gets the category of its row. Nothing else passes. Clear a name to remove its row.",
+    placeholder: "e.g. Focus",
+    /** The accessible names of the two fields of a row. */
+    category: (calendar: string) => `Category in ${calendar}`,
+    color: (calendar: string) => `Colour in ${calendar}`,
+    /** The empty choice of a row's colour. */
+    chooseColor: "Choose a colour",
+    addRow: "Add a row",
+    /**
+     * Google to Outlook: the switch of a row that shows the copy of a busy event as tentative.
+     * Google has no tentative status for an event that the user made alone. "Tentative" is the
+     * name of the status in Outlook.
+     */
+    tentative: "Tentative",
+    /** The accessible name of the switch; it starts with the visible text. */
+    tentativeIn: (calendar: string) => `Tentative in ${calendar}`,
+    tentativeHint:
+      "With Tentative on, the copy of a busy event shows as tentative in Outlook, so that others see that the time can move.",
+  },
+  /**
    * A save of a form drawn before another tab or device changed the mirroring, or one whose rules
    * changed while it ran. The save is one batch, so nothing was stored; the panel shows the stored
    * values.
@@ -162,6 +199,13 @@ export const mirroringEn = {
     categoryTooLong: (max: number) => `A category name can have at most ${max} characters.`,
     colorInvalid: "This colour does not fit the calendar. Reload the page.",
     onlyGoogle: "Google events have colours, not categories. Choose colours instead.",
+    /** A name to carry with a comma or too many characters. */
+    passName: (max: number) =>
+      `A category name cannot contain a comma and can have at most ${max} characters.`,
+    passIncomplete: "Every row needs a category name and a colour.",
+    passTooMany: (max: number) => `You can carry at most ${max} categories.`,
+    /** A tentative row in a direction other than Google to Outlook; the panel shows no switch. */
+    passTentative: "Only a copy from Google in Outlook can show as tentative. Reload the page.",
     /** A copied level of a mirroring with mixed marks, without an answer to "What others see". */
     whoRequired: (from: string) =>
       `Choose what others see. Your answer applies to each calendar of ${from}.`,
@@ -409,6 +453,27 @@ export const mirroringDe: MirroringMessages = {
     none: "Keine Farbe",
     categoryPlaceholder: "Keine festgelegt",
   },
+  pass: {
+    categories: "Kategorien übernehmen",
+    colors: "Farben übernehmen",
+    categoriesHint:
+      "Eine Kopie übernimmt jede dieser Kategorien, die ihr Termin hat. Keine andere Kategorie wird übernommen, denn ein Name kann verraten, worum es im Termin geht. Namen mit Komma trennen.",
+    colorsHint:
+      "Eine Kopie übernimmt die Farbe ihres Termins, wenn sie hier gewählt ist. Keine andere Farbe wird übernommen, denn eine Farbe kann verraten, worum es im Termin geht.",
+    rowsHint:
+      "Die Kopie eines Termins mit einer gelisteten Kategorie bekommt die Farbe ihrer Zeile; die erste passende Zeile geht vor der Farbe der Kopien. Sonst wird nichts übernommen. Lösche einen Namen, um seine Zeile zu entfernen.",
+    rowsHintColors:
+      "Die Kopie eines Termins in einer gelisteten Farbe bekommt die Kategorie ihrer Zeile. Sonst wird nichts übernommen. Lösche einen Namen, um seine Zeile zu entfernen.",
+    placeholder: "z. B. Fokus",
+    category: (calendar) => `Kategorie in ${calendar}`,
+    color: (calendar) => `Farbe in ${calendar}`,
+    chooseColor: "Farbe wählen",
+    addRow: "Zeile hinzufügen",
+    tentative: "Mit Vorbehalt",
+    tentativeIn: (calendar) => `Mit Vorbehalt in ${calendar}`,
+    tentativeHint:
+      "Ist „Mit Vorbehalt“ an, zeigt Outlook die Kopie eines belegten Termins als „Mit Vorbehalt“. So sehen andere, dass sich die Zeit verschieben lässt.",
+  },
   conflict:
     "Nicht gespeichert. Diese Spiegelung wurde in einem anderen Tab oder auf einem anderen Gerät geändert, nachdem du sie geöffnet hast. Das Panel zeigt jetzt die aktuellen Einstellungen. Ändere sie noch einmal, wenn du deine Änderung weiter willst.",
   fieldErrors: {
@@ -417,6 +482,12 @@ export const mirroringDe: MirroringMessages = {
     categoryTooLong: (max) => `Ein Kategoriename darf höchstens ${max} Zeichen haben.`,
     colorInvalid: "Diese Farbe passt nicht zum Kalender. Lade die Seite neu.",
     onlyGoogle: "Google-Termine haben Farben, keine Kategorien. Wähle stattdessen Farben.",
+    passName: (max) =>
+      `Ein Kategoriename darf kein Komma enthalten und höchstens ${max} Zeichen haben.`,
+    passIncomplete: "Jede Zeile braucht einen Kategorienamen und eine Farbe.",
+    passTooMany: (max) => `Du kannst höchstens ${max} Kategorien übernehmen.`,
+    passTentative:
+      "Nur eine Kopie von Google in Outlook kann „Mit Vorbehalt“ zeigen. Lade die Seite neu.",
     whoRequired: (from) =>
       `Wähle, was andere sehen. Deine Antwort gilt für jeden Kalender aus ${from}.`,
   },

@@ -80,6 +80,30 @@ const ruleOptionsFields = z.object({
    */
   blockColor: z._default(z.string().check(z.maxLength(100)), ""),
   /**
+   * Source categories that the blocks carry into the target, in the form of `skipCategories` for
+   * `from`. `to` is the target value: an Outlook category name, or a Google colour ID ("1" to
+   * "11"). An empty `to` takes `from`, which fits only a direction between two calendars of one
+   * provider. `from` is compared without case. Empty list: blocks carry no source category, because
+   * a category name can give away what the event is about.
+   */
+  passCategories: z._default(
+    z
+      .array(
+        z.object({
+          from: z.string().check(z.maxLength(100)),
+          to: z._default(z.string().check(z.maxLength(100)), ""),
+          /**
+           * True: the block of a busy event that matches `from` shows as tentative. Free and
+           * tentative events keep their status. The editor allows it from Google to Outlook only:
+           * Google has no tentative status for an event that the user made alone.
+           */
+          tentative: z._default(z.boolean(), false),
+        }),
+      )
+      .check(z.maxLength(50)),
+    [],
+  ),
+  /**
    * Minutes the block starts before and ends after a timed event, for example for travel time.
    * All-day blocks keep their dates. With 0, a block is exactly as long as its event.
    */

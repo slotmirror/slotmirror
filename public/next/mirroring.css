@@ -386,6 +386,44 @@
   box-shadow: inset 0 1px var(--line);
 }
 
+/* Carried categories between providers: one row per category, the source value, an arrow, the
+   target value. Both fields share the width, so a row stays on one line in the panel. */
+.mx-pass-rows {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.mx-pass-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.mx-pass-row .select {
+  display: flex;
+}
+
+.mx-pass-arrow {
+  color: var(--text-3);
+}
+
+/* From Google to Outlook a row ends with its "Tentative" switch. One caption above the rows names
+   the switches, at their right edge, so that the two fields keep most of the width. */
+.mx-pass-rows.has-tentative .mx-pass-row {
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 28px;
+}
+
+.mx-pass-head {
+  width: 100%;
+  margin-bottom: -4px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: end;
+}
+
 /* For all mirrorings: also apply the default to the existing ones -------------------------------- */
 
 /* The checkbox and its consequence show only for the chosen answer, and only if it changes a
