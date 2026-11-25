@@ -1186,7 +1186,9 @@ export function passCalendarsFor(
  * The state as it is once `calendarIds` are no longer sources, for the check of a save that also
  * turns them off: a new carried row must not name them. The directions keep the stored rows (see
  * `passCalendarsFor`) of their other rules. `options` comes from the first rule that stays, as the
- * reload after the save gives it: the rule it came from may be one that the save deletes.
+ * reload after the save gives it: the rule it came from may be one that the save deletes. If no
+ * source stays, the reload has no direction and the save skips its details as drift, so the
+ * direction keeps its `options`: the check must not refuse a batch that the save would take.
  */
 export function withoutSources(state: EditorState, calendarIds: ReadonlySet<string>): EditorState {
   if (calendarIds.size === 0) return state;
@@ -1195,6 +1197,7 @@ export function withoutSources(state: EditorState, calendarIds: ReadonlySet<stri
     directions: state.directions.map((direction) => {
       const slots = direction.slots.filter((slot) => !calendarIds.has(slot.sourceCalendarId));
       if (slots.length === direction.slots.length) return direction;
+      if (slots.length === 0) return { ...direction, slots };
       const first = slots.find((slot) => slot.rule)?.rule ?? null;
       return { ...direction, slots, options: first?.options ?? null };
     }),

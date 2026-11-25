@@ -941,7 +941,7 @@ describe("carried categories for all events of a source calendar", () => {
     const direction = state.directions.find((d) => d.from === g && d.to === w);
     const first = direction?.slots.find((slot) => slot.rule);
     const other = direction?.slots.find((slot) => slot !== first);
-    if (!first?.rule || !other) throw new Error("expected two source calendars with rules");
+    if (!first?.rule || !other?.rule) throw new Error("expected two source calendars with rules");
     const row = {
       from: `calendar:${first.sourceCalendarId}`,
       to: "Work Blocker",
@@ -967,6 +967,31 @@ describe("carried categories for all events of a source calendar", () => {
     expect(response.status).toBe(400);
     expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
     expect((await passByCalendar(w))[other.sourceCalendarId]).toEqual([]);
+  });
+
+  it("saves a batch that turns off the last source of a direction with a stored row", async () => {
+    const { cookie, w, g, user } = await setup("mpcallast");
+    await setDirection(env, user, g, w, "busy");
+    const main = `${g}-cal`;
+    const row = { from: `calendar:${main}`, to: "Work Blocker", tentative: true };
+    await setRuleDetails(env, user, { passCategories: [{ from: g, to: w, pairs: [row] }] });
+    expect(await passByCalendar(w)).toEqual({ [main]: [row] });
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`calendar.${main}`]: "0",
+        [`passCategories.${g}.${w}`]: JSON.stringify([[row.from, "Work Blocker", true]]),
+      }),
+    });
+    expect(response.status).toBe(204);
+    const { results } = await env.DB.prepare(
+      "SELECT is_source AS isSource FROM calendars WHERE id = ?",
+    )
+      .bind(main)
+      .all<{ isSource: number }>();
+    expect(results).toEqual([{ isSource: 0 }]);
   });
 
   it("keeps the other details of a batch that turns off a direction with a stale row", async () => {
