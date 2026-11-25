@@ -14,7 +14,7 @@
     "@astrojs/sitemap": "3.7.6",
     "@astrojs/starlight": "0.43.1",
     "@fontsource-variable/instrument-sans": "5.3.0",
-    "astro": "7.4.7",
+    "astro": "7.4.13",
     "posthog-js": "1.453.2",
     "sharp": "0.35.5"
   },
