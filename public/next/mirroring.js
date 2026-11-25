@@ -65,7 +65,8 @@
   // rows send their fields in order, so the fields need no index of their own. A "Tentative"
   // switch sends nothing while it is off, so it sends the index of its row: the new row gets the
   // next one, unticked. Its fields count as unchanged until the person fills them: the empty value
-  // is also their default.
+  // is also their default. A choice marked `data-pass-stale` names a calendar that is no longer a
+  // source; only the row that stored it offers it, so the new row drops it.
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-pass-add]") : null;
     const rows = button?.closest(".prop")?.querySelector(".mx-pass-rows");
@@ -80,6 +81,7 @@
         field.checked = false;
         field.value = index;
       } else if (field.localName === "select") {
+        for (const option of field.querySelectorAll("option[data-pass-stale]")) option.remove();
         for (const option of field.options) {
           option.defaultSelected = option.value === "";
           option.selected = option.value === "";

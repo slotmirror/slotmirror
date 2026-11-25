@@ -155,6 +155,8 @@ export const en = {
       "Only a mirroring from Google to Outlook can show its copies as tentative. Nothing was saved.",
     passCategoriesDirection:
       "This list belongs to a direction that no longer exists. Reload the page. Nothing was saved.",
+    passCategoriesCalendar:
+      "A row names a calendar that is not a source of this direction. Reload the page. Nothing was saved.",
     skipCategoriesLabel: "Skip events with these categories",
     skipCategoriesHint:
       "Events with one of these Outlook categories are not copied. Upper and lower case do not matter.",

@@ -5,6 +5,7 @@ import {
   MAX_PASS_CATEGORIES,
   levelOf,
   loadEditorState,
+  passCalendarsFor,
   passCategoriesFor,
   requestSyncs,
   ruleDetailsProblem,
@@ -14,6 +15,7 @@ import {
   setSettings,
   type DirectionDetails,
   type EditorAccount,
+  type EditorDirection,
   type PassPair,
   type RuleDetails,
   type RuleDetailsProblem,
@@ -84,9 +86,11 @@ function detailsRefusal(
           ? text.passTooMany(MAX_PASS_CATEGORIES)
           : problem.reason === "tentative"
             ? text.passTentative
-            : side?.provider === "google"
-              ? text.colorInvalid
-              : text.passName(MAX_CATEGORY_LENGTH);
+            : problem.reason === "calendar"
+              ? text.passCalendar
+              : side?.provider === "google"
+                ? text.colorInvalid
+                : text.passName(MAX_CATEGORY_LENGTH);
     return refuse(reason, "passCategories");
   }
   return refuse(ruleDetailsError(t, problem));
@@ -172,7 +176,8 @@ export async function saveMirroring(
       if (names.join("\n") !== stored.join("\n")) details.onlyCategories = names;
     }
     if (form.has("passCategoriesShown") && source) {
-      const pairs = passCategoriesOf(form, source, target, options?.passCategories ?? []);
+      const stored = options?.passCategories ?? [];
+      const pairs = passCategoriesOf(form, source, target, direction, stored);
       if (pairs) details.passCategories = pairs;
     }
   }
@@ -239,6 +244,7 @@ function passCategoriesOf(
   form: FormData,
   source: EditorAccount,
   target: EditorAccount,
+  direction: EditorDirection,
   stored: readonly PassPair[],
 ): PassPair[] | null {
   const pairs = passPairsFromForm(form, source.provider, target.provider).map((pair) => {
@@ -246,7 +252,8 @@ function passCategoriesOf(
     const kept = stored.find((entry) => entry.from.toLowerCase() === pair.from.toLowerCase());
     return kept ? { ...pair, to: kept.to } : pair;
   });
-  const checked = passCategoriesFor(source.provider, target.provider, pairs);
+  const calendars = passCalendarsFor(direction);
+  const checked = passCategoriesFor(source.provider, target.provider, pairs, calendars);
   if ("problem" in checked) return pairs;
   // A Google event has one colour, so the order of the boxes says nothing: the panel draws them in
   // the order of the palette, which need not be the stored one.

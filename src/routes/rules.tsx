@@ -26,6 +26,7 @@ import {
   setRuleDetails,
   setSettings,
   setSourceCalendar,
+  withoutSources,
   type BlockBuffer,
   type Choice,
   type RuleDetails,
@@ -335,7 +336,12 @@ rules.post("/choices", async (c) => {
     passCategories.push({ from: first, to: second, pairs });
   }
   details.passCategories = passCategories;
-  const problem = ruleDetailsProblem(await loadEditorState(c.env, user.id), details);
+  // The details are checked as the source calendars stand after this save: a carried row must not
+  // newly name a calendar that the same save turns off. A stored row of it stays valid, so that
+  // the details still pass when `setRuleDetails` reads the state again after `setSourceCalendar`.
+  const leaving = new Set(calendars.flatMap(({ first, value }) => (value === "1" ? [] : [first])));
+  const state = withoutSources(await loadEditorState(c.env, user.id), leaving);
+  const problem = ruleDetailsProblem(state, details);
   if (problem) return refuse(c, ruleDetailsError(t, problem));
 
   const syncs = new Set<string>();

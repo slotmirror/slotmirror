@@ -5,6 +5,29 @@ import { ALL_WEEKDAYS, END_OF_DAY, TIME_OF_DAY } from "./sync/working-hours";
 /** Longest buffer before or after a block, in minutes. */
 export const MAX_BUFFER_MINUTES = 240;
 
+/**
+ * Prefix of a `passCategories` source that names a source calendar, not a category: the row
+ * matches every event of a rule whose source calendar has the slotmirror calendar ID after the
+ * prefix. It is never the remote ID, which for Google is often an email address. Google events
+ * have no names, only `color:<id>`, so the prefix cannot meet a real category of a Google source.
+ */
+export const PASS_CALENDAR_PREFIX = "calendar:";
+
+/** The `passCategories` source that matches every event from a source calendar. */
+export function passCalendarKey(calendarId: string): string {
+  return `${PASS_CALENDAR_PREFIX}${calendarId}`;
+}
+
+/**
+ * True if a direction takes rows for a whole source calendar (`calendar:<ID>`). Only from Google
+ * to Outlook: there each row picks its source from a list, which can hold the calendars too.
+ * Outlook names are typed, so a name can start with the prefix, and between two Google calendars
+ * the panel shows colour boxes only. In every other direction such a `from` is a category name.
+ */
+export function canPassCalendar(source: string, target: string): boolean {
+  return source === "google" && target === "microsoft";
+}
+
 const bufferMinutes = z._default(z.int().check(z.minimum(0), z.maximum(MAX_BUFFER_MINUTES)), 0);
 
 /** Options of one sync rule (source calendar -> target calendar). Stored as JSON in `rules.options`. */
@@ -84,7 +107,9 @@ const ruleOptionsFields = z.object({
    * `from`. `to` is the target value: an Outlook category name, or a Google colour ID ("1" to
    * "11"). An empty `to` takes `from`, which fits only a direction between two calendars of one
    * provider. `from` is compared without case. Empty list: blocks carry no source category, because
-   * a category name can give away what the event is about.
+   * a category name can give away what the event is about. A `from` of the form
+   * `calendar:<calendar ID>` (see `PASS_CALENDAR_PREFIX`) matches every event of a rule from that
+   * source calendar, also events without a category, such as the events that Todoist writes.
    */
   passCategories: z._default(
     z

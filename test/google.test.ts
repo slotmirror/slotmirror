@@ -411,6 +411,64 @@ describe("rule across providers", () => {
     expect(result.stats).toMatchObject({ create: 6, delete: 0 });
     expect(urls.some((url) => url.includes("singleEvents=true"))).toBe(true);
   });
+
+  it("gives every copy the category of a row that names the Google source calendar", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
+    const { user } = await signIn("owner@example.com");
+    // The row names the slotmirror ID of the source calendar; the fixture events have no colour.
+    const row = { from: "calendar:gc-cal", to: "Work Blocker", tentative: true };
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES ('gc-src', ?, 'google', 'cal@gmail.com')",
+      ).bind(user.id),
+      env.DB.prepare(
+        "INSERT INTO accounts (id, user_id, provider, email) VALUES ('mc-dst', ?, 'microsoft', 'cal@work.example')",
+      ).bind(user.id),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit) VALUES ('gc-cal', 'gc-src', 'primary', 'Todoist', 1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO calendars (id, account_id, remote_id, name, can_edit) VALUES ('mc-cal', 'mc-dst', 'work-cal', 'Work', 1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO rules (id, user_id, source_calendar_id, target_calendar_id, options) VALUES ('xc-rule', ?, 'gc-cal', 'mc-cal', ?)",
+      ).bind(user.id, JSON.stringify({ passCategories: [row] })),
+    ]);
+    const tokens = { refreshToken: "r", accessToken: "a", accessExpiresAt: Date.now() + 3_600_000 };
+    await env.ACCOUNT_SYNC.getByName("gc-src").storeTokens("gc-src", tokens, "google");
+    const target = env.ACCOUNT_SYNC.getByName("mc-dst");
+    await target.storeTokens("mc-dst", tokens, "microsoft");
+
+    const batches: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith("https://www.googleapis.com/calendar/v3/calendars/primary/events")) {
+        return Response.json({ items: fixture.items });
+      }
+      if (url.includes("/calendars/work-cal/calendarView")) return Response.json({ value: [] });
+      if (url.endsWith("/$batch")) {
+        batches.push(init?.body as string);
+        const body = JSON.parse(init?.body as string) as { requests: { id: string }[] };
+        return Response.json({
+          responses: body.requests.map((request) => ({ id: request.id, status: 201 })),
+        });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    expect(await target.runRule("xc-rule")).toMatchObject({ applied: 6, failed: 0 });
+    const bodies = batches.flatMap((body) =>
+      (
+        JSON.parse(body) as {
+          requests: { body: { categories?: string[]; showAs: string } }[];
+        }
+      ).requests.map((request) => request.body),
+    );
+    expect(bodies).toHaveLength(6);
+    for (const body of bodies) expect(body.categories).toEqual(["Work Blocker"]);
+    expect(bodies.some((body) => body.showAs === "tentative")).toBe(true);
+  });
 });
 
 describe("Google calendar list", () => {

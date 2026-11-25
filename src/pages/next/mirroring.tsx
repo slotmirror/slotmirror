@@ -10,10 +10,15 @@ import {
   type EditorState,
   type Level,
   levelOf,
+  canPassCalendar,
   canPassTentative,
+  passCalendarOf,
+  passCalendarsFor,
   passCategoriesFor,
+  passSourceCalendars,
   type PassPair,
 } from "../../editor";
+import { passCalendarKey } from "../../config";
 import { passPairsFromForm } from "../../form";
 import { useI18n } from "../../i18n";
 import type { MirroringField } from "../../next-mirroring";
@@ -746,6 +751,13 @@ function RowArrow() {
   );
 }
 
+/** A choice after the colours in a row's colour list; `stale` for a calendar that left the list. */
+interface ExtraOption {
+  value: string;
+  label: string;
+  stale: boolean;
+}
+
 /**
  * The categories that the copies carry from their events. Between two calendars of one provider
  * the list holds the source values, as the filter does: names for Outlook, ticked colours for
@@ -754,17 +766,25 @@ function RowArrow() {
  * From Google to Outlook each row also has a "Tentative" switch, which sends the index of its row
  * as "passTentative". The server renders the saved rows and one empty row, which works without
  * script; the script adds more rows (`mirroring.js`).
+ *
+ * From Google to Outlook the colour list of a row also offers "All events from <calendar>" for
+ * each source calendar of the direction, also if it has only one: Todoist, for example, writes
+ * events without a colour into a calendar of its own. A stored row whose calendar is no longer a
+ * source keeps its choice, marked "not a source" or "removed calendar", so that the person sees
+ * it and can clear it. Only that row offers the calendar: a new row, also one the script adds,
+ * offers the source calendars only. The save keeps such a row, which has no effect.
  */
 function PassCategories(props: {
   from: EditorAccount;
   to: EditorAccount;
+  direction: EditorDirection;
   fields: Fields;
   stored: readonly PassPair[];
   error?: string;
 }) {
   const { t } = useI18n();
   const text = t.next.mirroring.pass;
-  const { from, to, fields, stored, error } = props;
+  const { from, to, direction, fields, stored, error } = props;
   const invalid = error !== undefined;
   const sourceIsGoogle = from.provider === "google";
   const shown = <input type="hidden" name="passCategoriesShown" value="1" />;
@@ -829,12 +849,32 @@ function PassCategories(props: {
     rows.push({ from: "", to: "", tentative: false });
   // Only Outlook shows a tentative copy, and only a Google event lacks the status of its own.
   const withTentative = canPassTentative(from.provider, to.provider);
+  const withCalendars = canPassCalendar(from.provider, to.provider);
+  const sourceCalendars = passSourceCalendars(direction);
+  const calendarOption = (id: string, stale: boolean): ExtraOption => {
+    const calendar = from.calendars.find((entry) => entry.id === id);
+    const label = !calendar
+      ? text.allEventsRemoved
+      : stale
+        ? text.allEventsNotSource(calendar.name)
+        : text.allEvents(calendar.name);
+    return { value: passCalendarKey(id), label, stale };
+  };
+  const sourceChoices = withCalendars ? sourceCalendars.map((id) => calendarOption(id, false)) : [];
+  // A row whose calendar is no longer a source offers it as its own choice; no other row does.
+  const calendarChoices = (row: PassPair): ExtraOption[] => {
+    const id = withCalendars ? passCalendarOf(row.from) : null;
+    return id === null || sourceCalendars.includes(id)
+      ? sourceChoices
+      : [...sourceChoices, calendarOption(id, true)];
+  };
   // After a refusal, the rows that do not fit on their own are marked; a list that is only too long
   // marks none, and the reason stands under the rows. A row without a name is blank, as on save.
+  const allowed = passCalendarsFor(direction);
   const rowInvalid = (row: PassPair) =>
     invalid &&
     (sourceIsGoogle ? row.to : row.from).trim() !== "" &&
-    "problem" in passCategoriesFor(from.provider, to.provider, [row]);
+    "problem" in passCategoriesFor(from.provider, to.provider, [row], allowed);
   const name = (
     field: "passFrom" | "passTo",
     value: string,
@@ -859,6 +899,7 @@ function PassCategories(props: {
     prefix: string,
     calendar: EditorAccount,
     marked: boolean,
+    extra: readonly ExtraOption[] = [],
   ) => (
     <span class="select">
       <select
@@ -872,6 +913,16 @@ function PassCategories(props: {
         {GOOGLE_COLORS.map((option) => (
           <option value={`${prefix}${option.id}`} selected={value === `${prefix}${option.id}`}>
             {t.editor.googleColor(option.id)}
+          </option>
+        ))}
+        {/* The script drops a stale choice from a row it adds (`mirroring.js`). */}
+        {extra.map((option) => (
+          <option
+            value={option.value}
+            selected={value === option.value}
+            data-pass-stale={option.stale ? "" : undefined}
+          >
+            {option.label}
           </option>
         ))}
       </select>
@@ -918,7 +969,7 @@ function PassCategories(props: {
           return (
             <div class="mx-pass-row">
               {sourceIsGoogle
-                ? color("passFrom", row.from, "color:", from, marked)
+                ? color("passFrom", row.from, "color:", from, marked, calendarChoices(row))
                 : name("passFrom", row.from, from, marked)}
               <RowArrow />
               {sourceIsGoogle
@@ -1431,6 +1482,7 @@ function DirectionPanel(
           <PassCategories
             from={from}
             to={to}
+            direction={direction}
             fields={fields}
             stored={options?.passCategories ?? []}
             error={errorAt("passCategories")}

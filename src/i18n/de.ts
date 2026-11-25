@@ -154,6 +154,8 @@ export const de: Messages = {
       "Nur eine Spiegelung von Google nach Outlook kann ihre Kopien als „Mit Vorbehalt“ zeigen. Es wurde nichts gespeichert.",
     passCategoriesDirection:
       "Diese Liste gehört zu einer Richtung, die es nicht mehr gibt. Lade die Seite neu. Es wurde nichts gespeichert.",
+    passCategoriesCalendar:
+      "Eine Zeile nennt einen Kalender, der keine Quelle dieser Richtung ist. Lade die Seite neu. Es wurde nichts gespeichert.",
     skipCategoriesLabel: "Termine mit diesen Kategorien auslassen",
     skipCategoriesHint:
       "Termine mit einer dieser Outlook-Kategorien werden nicht kopiert. Gross- und Kleinschreibung zählt nicht.",

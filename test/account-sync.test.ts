@@ -232,6 +232,32 @@ describe("AccountSync.runRule", () => {
     }
   });
 
+  it("reads a row `calendar:<ID>` from an Outlook source as a category name", async () => {
+    // Calendar rows exist only from Google to Outlook. From Outlook the row names a category, also
+    // if the name is the key of the rule's own source calendar: only events with it get the row.
+    const row = { from: "calendar:acc-cal-name-src", to: "Work Blocker", tentative: false };
+    const { stub, ruleId } = await setupRule("acc-cal-name", { passCategories: [row] });
+    await stub.storeTokens("acc-cal-name", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const [first, ...rest] = fixture.value;
+    const tagged = { ...first, categories: ["calendar:acc-cal-name-src"] };
+    const calls = fakeGraph([], { source: [tagged, ...rest] });
+
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 16, failed: 0 });
+    const batch = calls.find((call) => call.url.endsWith("/$batch"));
+    const bodies = (
+      JSON.parse(batch?.init?.body as string) as {
+        requests: { body: { subject: string; categories?: string[] } }[];
+      }
+    ).requests.map((request) => request.body);
+    expect(bodies).toHaveLength(16);
+    const carried = bodies.filter((body) => (body.categories ?? []).length > 0);
+    expect(carried.map((body) => body.categories)).toEqual([["Work Blocker"]]);
+  });
+
   it("never deletes blocks that another rule wrote into the same target calendar", async () => {
     const { stub, ruleId } = await setupRule("acc-shared-target");
     await stub.storeTokens("acc-shared-target", {
