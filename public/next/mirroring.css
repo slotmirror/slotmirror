@@ -1,0 +1,602 @@
+/* Styles of the mirroring page. Tokens, the property grid, swatches and the save bar: base.css. */
+
+/* List ------------------------------------------------------------------------------------------ */
+
+.mx-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-block: 12px 4px;
+}
+
+.mx-notices .notice {
+  align-items: center;
+}
+
+.mx-notices .notice svg {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.mx-notices .notice > form {
+  flex: none;
+}
+
+.mx-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The target of a group: its swatch and name, in the text tone. */
+.mx-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mx-target-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rows on fixed columns (base.css, section 4): source, level, tags, copies, status. The level
+   starts at the same x in every row, whatever the calendar's name; counts and status phrases end
+   at one x. The columns need 704 px plus the gutters, so below 760 px of list width the rows take
+   two lines (base.css). The status keeps 168 px ("Verbindung unterbrochen" with its dot) and
+   grows in a row whose words and time need more, rather than cutting them. */
+.mx-list {
+  --row-display: grid;
+  --row-main-display: contents;
+  --row-columns: [icon] 20px [title] 160px [meta] 208px [tags] minmax(0, 1fr) [count] 88px [status]
+    minmax(168px, max-content);
+}
+
+.mx-list .row-main {
+  gap: 12px;
+}
+
+/* The level is what the row is about: text tone, not meta. */
+.mx-list .row-meta {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.mx-list .list-row:has(.mx-quiet) .row-meta {
+  color: var(--text-3);
+}
+
+/* A mirroring that is not copied stays in the list, one step quieter. */
+.mx-quiet {
+  display: inline-flex;
+  opacity: 0.55;
+}
+
+.mx-quiet-text {
+  color: var(--text-2);
+  font-weight: 450;
+}
+
+/* Panel title: the mark of the level that the two questions name, then the route. CSS shows the
+   mark that matches the checked answers, so the title follows the form without script. -------- */
+
+.mx-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mx-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mx-title-marks {
+  display: inline-flex;
+  flex: none;
+  --glyph-ring: var(--surface);
+}
+
+.mx-title-mark {
+  display: none;
+}
+
+.detail:has([name="copy"][value="off"]:checked) .mx-title-mark[data-level="off"],
+.detail:has([name="copy"][value="busy"]:checked):has([name="who"][value="private"]:checked)
+  .mx-title-mark[data-level="busy-private"],
+.detail:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  .mx-title-mark[data-level="busy-open"],
+.detail:has([name="copy"][value="title"]:checked):has([name="who"][value="private"]:checked)
+  .mx-title-mark[data-level="title-private"],
+.detail:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  .mx-title-mark[data-level="title-open"],
+.detail:has([name="copy"][value="full"]:checked):has([name="who"][value="private"]:checked)
+  .mx-title-mark[data-level="full-private"],
+.detail:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  .mx-title-mark[data-level="full-open"] {
+  display: inline-flex;
+}
+
+/* Panel: the two questions ----------------------------------------------------------------------- */
+
+/* The hints of both questions follow the chosen answers. The page answers with CSS, so that it
+   also works without script. */
+.mx-copy-hint,
+.mx-who-hint {
+  display: none;
+}
+
+.detail-form:has([name="copy"][value="off"]:checked) .mx-copy-hint[data-copy="off"],
+.detail-form:has([name="copy"][value="busy"]:checked) .mx-copy-hint[data-copy="busy"],
+.detail-form:has([name="copy"][value="title"]:checked) .mx-copy-hint[data-copy="title"],
+.detail-form:has([name="copy"][value="full"]:checked) .mx-copy-hint[data-copy="full"] {
+  display: inline;
+}
+
+/* The working-hours hint follows the switch. Both texts are in the page; the switch decides which
+   one shows, with and without script. The hidden one is display: none, so assistive tech skips
+   it, and the switch's aria-describedby points at the one hint element that holds both. */
+.mx-hours-off,
+.mx-hours-on {
+  display: none;
+}
+
+.prop:not(:has([name="workHours"]:checked)) .mx-hours-off,
+.prop:has([name="workHours"]:checked) .mx-hours-on {
+  display: inline;
+}
+
+/* "What others see" matters at every copied level. It stays in place at "Not copied", dimmed, so
+   that the panel does not jump when the level changes; the script also disables its radios. Its
+   hint keeps room for its longest answer for the same reason: "Same as you" adds who the others
+   are, three lines in the panel. */
+.mx-who .prop-hint {
+  min-height: 48px;
+}
+
+/* The answer that a mirroring that is off takes from the default. */
+.mx-default {
+  margin-left: 2px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 450;
+}
+
+.mx-who-default {
+  display: block;
+  color: var(--text-3);
+}
+
+.detail-form:has([name="copy"][value="off"]:checked) .mx-who {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* The calendars of the source carry both marks: the answer applies to each of them. A tinted box
+   with a full hairline and the warning icon, as the consequence under "For all mirrorings". */
+.mx-mixed {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--warn) 32%, var(--line));
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  color: var(--text);
+}
+
+.mx-mixed svg {
+  flex: none;
+  color: var(--warn);
+}
+
+.detail-form:has([name="who"][value="private"]:checked) .mx-who-hint[data-who="private"],
+.detail-form:has([name="who"][value="open"]:checked):has([name="copy"][value="off"]:checked)
+  .mx-who-hint[data-copy="busy"],
+.detail-form:has([name="who"][value="open"]:checked):has([name="copy"][value="busy"]:checked)
+  .mx-who-hint[data-copy="busy"],
+.detail-form:has([name="who"][value="open"]:checked):has([name="copy"][value="title"]:checked)
+  .mx-who-hint[data-copy="title"],
+.detail-form:has([name="who"][value="open"]:checked):has([name="copy"][value="full"]:checked)
+  .mx-who-hint[data-copy="full"] {
+  display: inline;
+}
+
+/* Preview ----------------------------------------------------------------------------------------- */
+
+/* Each level has its own preview; CSS shows the one of the checked answers. Every copied level
+   shows two rows and keeps the line of the disclosure. The area takes the height of its level:
+   the sections below move when the level changes, which is accepted, and stay put when only the
+   audience changes. The open entry of "Title" and "Everything" is taller than the private one (it
+   wraps the title, and carries the details): the private one keeps its room. Measured at 400 px
+   and 390 px: title 48, everything 64. */
+.mx-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mx-pv[data-pv="title-private"] .prop:last-of-type .prop-control {
+  min-height: 48px;
+}
+
+.mx-pv[data-pv="full-private"] .prop:last-of-type .prop-control {
+  min-height: 64px;
+}
+
+.mx-pv {
+  display: none;
+}
+
+.detail-form:has([name="copy"][value="off"]:checked) .mx-pv[data-pv="off"],
+.detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="private"]:checked)
+  .mx-pv[data-pv="busy-private"],
+.detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  .mx-pv[data-pv="busy-open"],
+.detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="private"]:checked)
+  .mx-pv[data-pv="title-private"],
+.detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  .mx-pv[data-pv="title-open"],
+.detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="private"]:checked)
+  .mx-pv[data-pv="full-private"],
+.detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  .mx-pv[data-pv="full-open"] {
+  display: flex;
+}
+
+.mx-none {
+  color: var(--text-2);
+}
+
+/* A mirroring with mixed marks before the person answers "What others see": no preview yet. */
+.mx-pv-answer {
+  display: none;
+}
+
+.detail-form:has([name="copy"]:not([value="off"]):checked):not(:has([name="who"]:checked))
+  .mx-pv-answer {
+  display: block;
+}
+
+/* A sample event in the colour of its calendar. Colours mix in oklab: an oklch mix of a calendar colour
+   with a bluish neutral drifts through other hues. */
+.mx-ev {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  /* Centred, not on the baseline: the 12 px time on the 13 px title's baseline makes the block
+     29 px tall, off the 4 px grid. */
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in oklab, var(--c, var(--text-3)) 42%, var(--line));
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--c, var(--text-3)) 13%, var(--surface));
+  line-height: 20px;
+  overflow: hidden;
+}
+
+.mx-ev > span {
+  position: relative;
+}
+
+.mx-ev-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Outlook marks a private item with a lock. */
+.mx-ev-lock {
+  position: relative;
+  flex: none;
+  align-self: center;
+  margin-right: -4px;
+  color: var(--text-2);
+}
+
+.mx-ev-time {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.mx-ev-detail {
+  flex-basis: 100%;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* A busy block carries the hatch of the logo. Dark mode needs more of the colour to show it. */
+.mx-ev.is-busy {
+  background: color-mix(in oklab, var(--c, var(--text-3)) 5%, var(--surface));
+}
+
+/* Text on the hatch keeps the block's base tint behind it, so the stripes do not cut the glyphs.
+   The patch reaches 2 px past the text without taking width: the negative margin gives it back,
+   so "Privater Termin 10:00-11:00" still fits the 400 px panel on one line. */
+.mx-ev.is-busy :is(.mx-ev-title, .mx-ev-time) {
+  margin-inline: -2px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--c, var(--text-3)) 5%, var(--surface));
+}
+
+.mx-hatch {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: light-dark(
+    color-mix(in oklab, var(--c, var(--text-3)) 30%, transparent),
+    color-mix(in oklab, var(--c, var(--text-3)) 45%, transparent)
+  );
+}
+
+/* "Who still sees it?" under the preview, in the control column. Only a private copy has an
+   answer; for an open one the line stays empty, so the panel does not move. */
+.mx-still {
+  visibility: hidden;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.detail-form:has([name="copy"][value="off"]:checked) .mx-still {
+  display: none;
+}
+
+.detail-form:has([name="copy"]:not([value="off"]):checked):has(
+    [name="who"][value="private"]:checked
+  )
+  .mx-still {
+  visibility: visible;
+}
+
+.mx-still summary {
+  width: fit-content;
+  color: var(--text-2);
+}
+
+.mx-still summary:hover {
+  color: var(--text);
+}
+
+.mx-still p {
+  margin-top: 4px;
+  color: var(--text-2);
+  line-height: 16px;
+}
+
+/* Limits and the look of the copies make no sense for a mirroring that is not copied. */
+.detail-form:has([name="copy"][value="off"]:checked) .mx-when-copied {
+  display: none;
+}
+
+.mx-when-copied > .section:first-child {
+  box-shadow: inset 0 1px var(--line);
+}
+
+/* Carried categories between providers: one row per category, the source value, an arrow, the
+   target value. Both fields share the width, so a row stays on one line in the panel. */
+.mx-pass-rows {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.mx-pass-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.mx-pass-row .select {
+  display: flex;
+}
+
+.mx-pass-arrow {
+  color: var(--text-3);
+}
+
+/* From Google to Outlook a row ends with its "Tentative" switch. One caption above the rows names
+   the switches, at their right edge, so that the two fields keep most of the width. */
+.mx-pass-rows.has-tentative .mx-pass-row {
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 28px;
+}
+
+.mx-pass-head {
+  width: 100%;
+  margin-bottom: -4px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: end;
+}
+
+/* For all mirrorings: also apply the default to the existing ones -------------------------------- */
+
+/* The checkbox and its consequence show only for the chosen answer, and only if it changes a
+   mirroring; the consequence only while the box is ticked. Pure CSS, so it works without script.
+   This is the one place of the consequence: the save bar only renames its button. */
+.mx-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-form:has([name="newWho"][value="private"]:checked)
+  .mx-apply:has([data-apply="private"][data-count="0"]),
+.detail-form:has([name="newWho"][value="open"]:checked)
+  .mx-apply:has([data-apply="open"][data-count="0"]) {
+  display: none;
+}
+
+.mx-apply-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.mx-apply-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.mx-apply [data-apply],
+.mx-apply-hint {
+  display: none;
+}
+
+.detail-form:has([name="newWho"][value="private"]:checked) .mx-apply [data-apply="private"],
+.detail-form:has([name="newWho"][value="open"]:checked) .mx-apply [data-apply="open"] {
+  display: inline;
+}
+
+.detail-form:has([name="newWho"][value="private"]:checked):has([name="applyWho"]:checked)
+  .mx-apply-hint[data-who="private"],
+.detail-form:has([name="newWho"][value="open"]:checked):has([name="applyWho"]:checked)
+  .mx-apply-hint[data-who="open"] {
+  display: flex;
+}
+
+.mx-apply-hint {
+  gap: 8px;
+  margin-left: 24px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Wider visibility: a tinted box with a full hairline and the warning icon. */
+.mx-apply-hint.is-warn {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--warn) 32%, var(--line));
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  color: var(--text);
+}
+
+.mx-apply-icon {
+  flex: none;
+  color: var(--warn);
+}
+
+/* Without script: the save-bar note of the chosen level, and the label of the Save button ---------- */
+
+/* The script shows the note of the chosen level and swaps the button label (`mirroring.js`,
+   `panel.js`). Without it, CSS does the same from the checked answers. A note carries `hidden`,
+   which base.css enforces with !important, so these rules need it too. */
+html:not(.js) .detail-form:has([name="copy"][value="off"]:checked) [data-sentence="off"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="private"]:checked)
+  [data-sentence="busy-private"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  [data-sentence="busy-open"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="private"]:checked)
+  [data-sentence="title-private"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  [data-sentence="title-open"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="private"]:checked)
+  [data-sentence="full-private"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  [data-sentence="full-open"] {
+  display: block !important;
+}
+
+/* The notes area shows when one of its notes shows; a warning brings the icon. */
+html:not(.js)
+  .detail-form:has([name="copy"][value="off"]:checked)
+  .savebar-notes:has([data-sentence="off"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="private"]:checked)
+  .savebar-notes:has([data-sentence="busy-private"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="busy-open"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="private"]:checked)
+  .savebar-notes:has([data-sentence="title-private"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="title-open"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="private"]:checked)
+  .savebar-notes:has([data-sentence="full-private"]),
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="full-open"]) {
+  display: flex;
+}
+
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="busy-open"][data-warn])
+  .savebar-note-icon,
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="title-open"][data-warn])
+  .savebar-note-icon,
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  .savebar-notes:has([data-sentence="full-open"][data-warn])
+  .savebar-note-icon {
+  display: block;
+}
+
+/* Only the open levels can widen what others see, so only they have a label of their own. */
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  [data-label-for="busy-open"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  [data-label-for="title-open"],
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  [data-label-for="full-open"] {
+  display: inline !important;
+}
+
+html:not(.js)
+  .detail-form:has([name="copy"][value="busy"]:checked):has([name="who"][value="open"]:checked)
+  [data-save]:has([data-label-for="busy-open"])
+  [data-label-default],
+html:not(.js)
+  .detail-form:has([name="copy"][value="title"]:checked):has([name="who"][value="open"]:checked)
+  [data-save]:has([data-label-for="title-open"])
+  [data-label-default],
+html:not(.js)
+  .detail-form:has([name="copy"][value="full"]:checked):has([name="who"][value="open"]:checked)
+  [data-save]:has([data-label-for="full-open"])
+  [data-label-default] {
+  display: none;
+}
+
+/* Phone ---------------------------------------------------------------------------------------- */
+
+@media (max-width: 719.98px) {
+  .mx-notices .notice {
+    flex-wrap: wrap;
+  }
+}

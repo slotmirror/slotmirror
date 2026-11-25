@@ -25,3 +25,11 @@ GOOGLE_CLIENT_SECRET=
 # DATA_JURISDICTION=
 # MCP_ENABLED=1
 # TIME_ZONE=Europe/Vienna
+
+# Local development only: skip the provider sign-in and act as this existing user.
+# Needs DEV_FAKE_CALENDARS=1 as well. Has no effect on any host other than localhost, 127.0.0.1
+# and [::1], or while PUBLIC_URL names another host, such as a tunnel. Anyone who reaches the
+# server acts as this user: never set it with a non-loopback listen address or behind any proxy
+# or port forward (nginx, ssh -R, socat, kubectl port-forward).
+# DEV_SIGN_IN_AS=you@example.com
+# DEV_FAKE_CALENDARS=1

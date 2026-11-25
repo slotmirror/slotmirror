@@ -224,6 +224,7 @@ export const OPTION_ROLES: Record<keyof RuleOptions, "filter" | "times" | "horiz
   workTimeZone: "filter",
   markPrivate: "content",
   blockColor: "content",
+  passCategories: "content",
   bufferBefore: "times",
   bufferAfter: "times",
 };

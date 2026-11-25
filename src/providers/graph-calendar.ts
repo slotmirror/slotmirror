@@ -28,6 +28,7 @@ import {
   type SyncAction,
 } from "../sync/types";
 import { parseEach } from "../schema-issues";
+import { outlookCategoryName } from "../sync/category-values";
 import type {
   CalendarClient,
   CalendarInfo,
@@ -500,6 +501,23 @@ function retryAfterHeader(headers: Record<string, string> | undefined): string |
 }
 
 /**
+ * The Outlook categories of a block: the block colour, then the passed categories, each once
+ * (compared without case). A passed value that Outlook cannot take is dropped, so that a wrong
+ * stored rule never fails the write.
+ */
+function graphCategories(block: DesiredBlock): string[] {
+  const names = block.color ? [block.color] : [];
+  const seen = new Set(names.map((name) => name.toLowerCase()));
+  for (const value of block.categories ?? []) {
+    const name = outlookCategoryName(value);
+    if (name === null || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    names.push(name);
+  }
+  return names;
+}
+
+/**
  * Graph event body for a block. No attendees, so that no invitations are sent. An all-day block
  * needs `allDayZone`: Graph keeps the instant of the write, so a block in another zone than the
  * mailbox lies beside the local day. A read under UTC returns the same dates for each zone.
@@ -521,7 +539,7 @@ export function toGraphBlock(block: DesiredBlock, ruleTag: string, allDayZone = 
     location: { displayName: block.location },
     body: { contentType: "text", content: block.body },
     // Always set, so that an update also removes a category the rule no longer uses.
-    categories: block.color ? [block.color] : [],
+    categories: graphCategories(block),
     singleValueExtendedProperties: [
       { id: MARKER_PROPERTY_ID, value: markerValueFor(ruleTag, block) },
       { id: DEDUP_PROPERTY_ID, value: block.dedupKey },

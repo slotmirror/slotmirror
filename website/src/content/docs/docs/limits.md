@@ -14,6 +14,8 @@ description: What slotmirror does not do yet, and how it stays inside the Cloudf
   marked as free. You can leave them out with **Skip all-day events** under **For all calendars**.
 - **Past blocks stay.** The sync looks from today forward. If you delete a rule, its blocks from
   today on are removed. Blocks before today stay as history.
+- **Current browsers.** The pages need Chrome or Edge 123, Firefox 125 or Safari 17.5, or a later
+  version. Older browsers show the pages without colours, and some menus do not open.
 - **Unverified Google app.** Until Google verifies your OAuth client, Google shows a warning when
   someone connects a Google account.
 

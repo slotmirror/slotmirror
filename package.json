@@ -1,6 +1,6 @@
 {
   "name": "slotmirror",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Mirror busy blocks between Microsoft 365 and Google calendars. Self-hosted on Cloudflare Workers.",
   "license": "AGPL-3.0-only",
@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "trial:report": "node scripts/trial-report.ts",
+    "assets:generate": "node scripts/asset-manifest.mjs",
+    "assets:check": "node scripts/asset-manifest.mjs --check",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy --define \"__BUILD_COMMIT__:\\\"$(git rev-parse --short=9 HEAD 2>/dev/null)\\\"\"",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:schema": "vitest run --project node --update src/runtime/node/registry.node.test.ts",
@@ -23,11 +25,11 @@
     "suite:published": "node suite/check-published.ts",
     "suite:proof": "vitest run --config suite/vitest.config.ts suite/proof/",
     "waitlist:check": "pnpm --filter slotmirror-waitlist check",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm suite:proof && pnpm suite:gate && pnpm suite:published && pnpm waitlist:check",
+    "check": "pnpm assets:check && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm suite:proof && pnpm suite:gate && pnpm suite:published && pnpm waitlist:check",
     "prepare": "husky"
   },
   "dependencies": {
-    "hono": "4.13.14",
+    "hono": "4.13.16",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -35,6 +37,7 @@
     "@commitlint/cli": "21.2.4",
     "@commitlint/config-conventional": "21.2.4",
     "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
     "husky": "9.1.7",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",

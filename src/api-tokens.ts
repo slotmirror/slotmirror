@@ -1,5 +1,6 @@
 import { recordAudit } from "./audit";
 import { disconnectUserApps } from "./mcp-oauth";
+import { credentialActions } from "./permissions";
 import { base64url } from "./session";
 import { loadUser, type SignedInUser } from "./users";
 
@@ -45,6 +46,8 @@ const DAY_MS = 86_400_000;
 export interface ApiToken {
   id: string;
   name: string;
+  /** The token may call `list_events`. */
+  events: boolean;
   lastFour: string;
   expiresAt: string;
   createdAt: string;
@@ -65,7 +68,7 @@ async function hashToken(token: string): Promise<string> {
 export async function createApiToken(
   env: Env,
   user: { id: string; orgId: string; sessionVersion: number },
-  input: { name: string; days: number },
+  input: { name: string; days: number; events?: boolean },
   now = Date.now(),
 ): Promise<{ token: string } | null> {
   if (!Number.isInteger(input.days) || input.days < 1 || input.days > MAX_TOKEN_DAYS) {
@@ -82,7 +85,7 @@ export async function createApiToken(
     env.DB.prepare(
       `INSERT INTO api_tokens (token_hash, id, user_id, name, last_four, scope, session_version,
                                expires_at)
-       SELECT ?, ?, u.id, ?, ?, 'read', u.session_version, ? FROM users u
+       SELECT ?, ?, u.id, ?, ?, ?, u.session_version, ? FROM users u
        WHERE u.id = ? AND u.session_version = ?
          AND (SELECT COUNT(*) FROM api_tokens t WHERE t.user_id = u.id) < ?`,
     ).bind(
@@ -90,6 +93,8 @@ export async function createApiToken(
       id,
       input.name,
       token.slice(-4),
+      // A token reads events only if its user chose so when creating it; see `credentialActions`.
+      input.events ? "read events" : "read",
       expiresAt,
       user.id,
       user.sessionVersion,
@@ -101,7 +106,7 @@ export async function createApiToken(
     orgId: user.orgId,
     userId: user.id,
     kind: "api_token_created",
-    detail: { tokenId: id, days: input.days },
+    detail: { tokenId: id, days: input.days, ...(input.events ? { events: true } : {}) },
   });
   return { token };
 }
@@ -110,12 +115,15 @@ export async function listApiTokens(db: D1Database, userId: string): Promise<Api
   const { results } = await db
     .prepare(
       `SELECT id, name, last_four AS lastFour, expires_at AS expiresAt, created_at AS createdAt,
-              last_used_at AS lastUsedAt
+              last_used_at AS lastUsedAt, scope
        FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC, id`,
     )
     .bind(userId)
-    .all<ApiToken>();
-  return results;
+    .all<Omit<ApiToken, "events"> & { scope: string }>();
+  return results.map(({ scope, ...token }) => ({
+    ...token,
+    events: credentialActions(scope).has("events:read"),
+  }));
 }
 
 /** End one token of the user. Return false if the user has no such token. */
@@ -179,13 +187,13 @@ export async function authenticateToken(
   env: Env,
   header: string | undefined,
   now = Date.now(),
-): Promise<SignedInUser | null> {
+): Promise<(SignedInUser & { scope: string }) | null> {
   const token = /^bearer +(\S+)$/i.exec(header ?? "")?.[1];
   if (!token || !TOKEN_PATTERN.test(token)) return null;
   const hash = await hashToken(token);
   const row = await env.DB.prepare(
     `SELECT user_id AS userId, session_version AS sessionVersion, expires_at AS expiresAt,
-            last_used_at AS lastUsedAt
+            last_used_at AS lastUsedAt, scope
      FROM api_tokens WHERE token_hash = ?`,
   )
     .bind(hash)
@@ -194,6 +202,7 @@ export async function authenticateToken(
       sessionVersion: number;
       expiresAt: string;
       lastUsedAt: string | null;
+      scope: string;
     }>();
   if (!row || Date.parse(row.expiresAt) <= now) return null;
   const user = await loadUser(env, row.userId, row.sessionVersion);
@@ -203,7 +212,7 @@ export async function authenticateToken(
       .bind(new Date(now).toISOString(), hash)
       .run();
   }
-  return user;
+  return { ...user, scope: row.scope };
 }
 
 /**

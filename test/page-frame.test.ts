@@ -19,6 +19,7 @@ describe("page frame", () => {
   it("shows no sidebar on the privacy page for a visitor", async () => {
     const html = await page("/privacy");
     expect(html).not.toContain('class="sidebar"');
-    expect(html).toContain('class="topbar"');
+    // The visitor's layout of the redesign: one column, no sidebar.
+    expect(html).toContain('class="pub-panel"');
   });
 });

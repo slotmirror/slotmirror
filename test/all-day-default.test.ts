@@ -602,7 +602,7 @@ describe("the settings of a user whose rules are older than the default", () => 
 
   async function switchOf(cookie: string): Promise<string> {
     const page = await (
-      await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+      await exports.default.fetch(`${BASE}/mirroring?d=all`, { headers: { cookie } })
     ).text();
     return /<input[^>]*name="skipAllDay"[^>]*>/.exec(page)?.[0] ?? "";
   }
@@ -700,10 +700,10 @@ describe("the settings of a user whose rules are older than the default", () => 
       return { ...context, values };
     }
 
-    /** The fields of the settings form as the page shows them. */
+    /** The fields of the settings panel as the page shows them. */
     async function shownFields(cookie: string) {
       const page = await (
-        await exports.default.fetch(`${BASE}/rules`, { headers: { cookie } })
+        await exports.default.fetch(`${BASE}/mirroring?d=all`, { headers: { cookie } })
       ).text();
       const shown = /name="skipAllDayShown" value="([^"]*)"/.exec(page)?.[1];
       return {

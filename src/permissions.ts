@@ -19,6 +19,7 @@ export const ACTIONS = [
   "apps:connect",
   "mcp:read",
   "mcp:write",
+  "events:read",
   "users:read",
   "users:manage",
   "org:audit",
@@ -58,8 +59,11 @@ const SELF_SERVICE: readonly Action[] = [
   "tokens:revoke",
 ];
 
-/** The actions that the org's MCP setting gives members. */
-const MEMBER_MCP: readonly Action[] = ["tokens:create", "apps:connect", "mcp:read"];
+/**
+ * The actions that the org's MCP setting gives members. `events:read` also needs a credential that
+ * the user allowed to read events, and MCP_EVENTS_ENABLED=1; see `credentialActions`.
+ */
+const MEMBER_MCP: readonly Action[] = ["tokens:create", "apps:connect", "mcp:read", "events:read"];
 
 const ADMIN_ONLY: readonly Action[] = [
   "users:read",
@@ -99,4 +103,23 @@ export function permitted<T extends { action: Action }>(
 ): T[] {
   const grants = nativeGrants(principal);
   return items.filter((item) => grants.has(item.action));
+}
+
+/** OAuth scope of the MCP tools that read sync state. Every credential has it. */
+export const READ_SCOPE = "mcp:read";
+/** OAuth scope of the tool that reads calendar events. Only a credential the user allowed has it. */
+export const EVENTS_SCOPE = "mcp:events";
+
+/**
+ * The MCP actions that a credential carries, from its stored scope. A personal token stores
+ * `read` or `read events`, an OAuth grant `mcp:read` or `mcp:read mcp:events`. Tokens and grants
+ * from before event access store only the read scope, so they never gain `events:read`. The role
+ * still decides as well: an action counts only if `can` also grants it.
+ */
+export function credentialActions(scope: string): ReadonlySet<Action> {
+  const words = new Set(scope.split(" "));
+  const actions = new Set<Action>();
+  if (words.has("read") || words.has(READ_SCOPE)) actions.add("mcp:read");
+  if (words.has("events") || words.has(EVENTS_SCOPE)) actions.add("events:read");
+  return actions;
 }

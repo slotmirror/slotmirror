@@ -157,6 +157,35 @@ describe("group rules", () => {
     expect(await rulesOf(user.id)).toEqual([groupBusy(o, w), groupBusy(w, o)]);
   });
 
+  it("get the block title of the user's language when a calendar load creates the first ones", async () => {
+    const { user, ids } = await setup("gr-title", ["w", "o"], { withoutCalendars: ["w"] });
+    for (const id of ids) await setGroupMembership(env, user, id, true);
+    const titleOf = async () =>
+      (
+        JSON.parse(
+          (
+            await env.DB.prepare("SELECT sync_settings AS json FROM users WHERE id = ?")
+              .bind(user.id)
+              .first<{ json: string }>()
+          )?.json ?? "{}",
+        ) as { blockTitle?: string }
+      ).blockTitle;
+    expect(await titleOf()).toBeUndefined();
+
+    await refreshUserCalendars(env, user.id, "Beschäftigt");
+    expect((await rulesOf(user.id)).length).toBe(2);
+    expect(await titleOf()).toBe("Beschäftigt");
+    const stored = await env.DB.prepare("SELECT options FROM rules WHERE user_id = ?")
+      .bind(user.id)
+      .all<{ options: string }>();
+    for (const row of stored.results) {
+      expect((JSON.parse(row.options) as { blockTitle: string }).blockTitle).toBe("Beschäftigt");
+    }
+    // A later load in another language does not rename anything.
+    await refreshUserCalendars(env, user.id, "Busy again");
+    expect(await titleOf()).toBe("Beschäftigt");
+  });
+
   it("are created when a read-only target becomes writable, and keep the exceptions", async () => {
     const { user, ids } = await setup("gr-ro", ["w", "o", "g"]);
     const [w, o, g] = ids as [string, string, string];
@@ -494,6 +523,32 @@ describe("unexpected errors", () => {
     expect(logged).toContain("invalid_grant");
   });
 
+  it("names the answering route in the log, never the path or a later wildcard", async () => {
+    const { cookie } = await setup("err-route", ["w", "o"]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(env.DB, "prepare").mockImplementation(() => {
+      throw new Error("D1_ERROR: database is locked");
+    });
+    const cases = [
+      ["GET", "/mirroring?d=secret-id", "/mirroring"],
+      ["POST", "/calendars/refresh", "/calendars/refresh"],
+      ["POST", "/calendars/secret-id", "/calendars/:id"],
+      ["POST", "/next/tokens/secret-id/revoke", "/next/tokens/:id/revoke"],
+    ] as const;
+    for (const [method, path, route] of cases) {
+      errors.mockClear();
+      const response = await exports.default.fetch(`${BASE}${path}`, {
+        method,
+        headers: { cookie },
+      });
+      expect(response.status, path).toBe(500);
+      expect(errors).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "request.failed", method, route }),
+      );
+      expect(JSON.stringify(errors.mock.calls)).not.toContain("secret-id");
+    }
+  });
+
   it("show a localized error page, and a short text to the editor script", async () => {
     const { cookie } = await setup("err", ["w", "o"]);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -510,10 +565,18 @@ describe("unexpected errors", () => {
     expect(html).toContain("Etwas ist schiefgelaufen");
     // A D1 message is logged: it holds no bound values. The stack is only its frames.
     expect(errors).toHaveBeenCalledWith(
-      "Request failed",
-      "Error",
-      "D1_ERROR: database is locked",
-      expect.stringMatching(/^\s*at /),
+      expect.objectContaining({
+        event: "request.failed",
+        route: "/rules",
+        // The request middleware gave the request its ID.
+        requestId: expect.stringMatching(/^[0-9a-f]{16}$/),
+        trigger: "http",
+        error: expect.objectContaining({
+          name: "Error",
+          message: "D1_ERROR: database is locked",
+          frames: expect.stringMatching(/^\s*at /),
+        }),
+      }),
     );
 
     const fragment = await exports.default.fetch(`${BASE}/rules/direction/check?lang=de`, {

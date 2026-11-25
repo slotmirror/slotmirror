@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseRuleOptions, setupStatus } from "../src/config";
+import * as z from "zod/mini";
+import { parseRuleOptions, ruleOptionsSchema, setupStatus } from "../src/config";
 
 describe("parseRuleOptions", () => {
   it("fills defaults for an empty object", () => {
@@ -19,6 +20,7 @@ describe("parseRuleOptions", () => {
       workTimeZone: "",
       markPrivate: true,
       blockColor: "",
+      passCategories: [],
       bufferBefore: 0,
       bufferAfter: 0,
     });
@@ -32,6 +34,57 @@ describe("parseRuleOptions", () => {
     expect(Object.keys(options)).not.toEqual(
       expect.arrayContaining(["showOrigin", "linkOrigin", "originLocale"]),
     );
+  });
+
+  it("reads passed categories with a blank target by default", () => {
+    const options = parseRuleOptions(
+      '{"passCategories": [{"from": "Focus"}, {"from": "color:5", "to": "Fokus"}]}',
+    );
+    expect(options.passCategories).toEqual([
+      { from: "Focus", to: "", tentative: false },
+      { from: "color:5", to: "Fokus", tentative: false },
+    ]);
+    expect(() => parseRuleOptions('{"passCategories": [{"to": "Focus"}]}')).toThrow();
+    const many = JSON.stringify({ passCategories: Array(51).fill({ from: "a" }) });
+    expect(() => parseRuleOptions(many)).toThrow();
+  });
+
+  it("lets a Worker without passed categories read options that have them", () => {
+    // The previous Worker has the same object schema without the field. z.object drops unknown
+    // keys, so a rollback after a save with passed categories still reads the rule.
+    const { passCategories: _, ...previousShape } = ruleOptionsSchema.shape;
+    const previous = z.object(previousShape);
+    const stored = { detailLevel: "title", passCategories: [{ from: "Focus", to: "" }] };
+    const parsed = previous.parse(stored);
+    expect(parsed.detailLevel).toBe("title");
+    expect(parsed).not.toHaveProperty("passCategories");
+    // Control: a strict copy refuses the same input, so the test reads the key handling.
+    expect(() => z.strictObject(previousShape).parse(stored)).toThrow();
+  });
+
+  it("reads the tentative mark of a passed category, false by default", () => {
+    const options = parseRuleOptions(
+      '{"passCategories": [{"from": "color:5", "to": "Focus", "tentative": true}, {"from": "a"}]}',
+    );
+    expect(options.passCategories).toEqual([
+      { from: "color:5", to: "Focus", tentative: true },
+      { from: "a", to: "", tentative: false },
+    ]);
+    expect(() =>
+      parseRuleOptions('{"passCategories": [{"from": "a", "tentative": "yes"}]}'),
+    ).toThrow();
+  });
+
+  it("lets a Worker without the tentative mark read passed categories that have it", () => {
+    // The previous Worker has the same pair object without the key. z.object drops unknown keys,
+    // so a rollback after a save with a tentative row still reads the rule.
+    const previousPair = { from: z.string(), to: z._default(z.string(), "") };
+    const previous = z.object({ passCategories: z.array(z.object(previousPair)) });
+    const stored = { passCategories: [{ from: "color:5", to: "Focus", tentative: true }] };
+    expect(previous.parse(stored)).toEqual({ passCategories: [{ from: "color:5", to: "Focus" }] });
+    // Control: a strict pair refuses the same input, so the test reads the key handling.
+    const strict = z.object({ passCategories: z.array(z.strictObject(previousPair)) });
+    expect(() => strict.parse(stored)).toThrow();
   });
 
   it("accepts buffers from 0 to 240 whole minutes", () => {

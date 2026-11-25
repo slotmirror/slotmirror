@@ -28,7 +28,7 @@ Anbieter sie meldet. Ohne `PUBLIC_URL` kommt die Änderung beim nächsten Lauf a
 ## Was du bekommst
 
 - Arbeitstermine erscheinen im Google Kalender, auf Wunsch mit Titel.
-- Google-Termine erscheinen in Outlook als „Belegt“, als privat markiert.
+- Google-Termine erscheinen in Outlook als private Termine.
 - Ein verschobener oder abgesagter Termin verschiebt oder entfernt seine Kopie.
 
 ## Schritte
@@ -37,11 +37,12 @@ Anbieter sie meldet. Ohne `PUBLIC_URL` kommt die Änderung beim nächsten Lauf a
 2. Lege eine [Microsoft-Entra-App](../../../docs/entra-setup/) und einen
    [Google-OAuth-Client](../../../docs/google-setup/) an.
 3. Setze `PUBLIC_URL`, damit die Anbieter deine Installation über Änderungen informieren.
-4. Melde dich an und verbinde beide Konten unter **Konten**.
-5. Nutze auf der Seite **Regeln** den **Schnellstart**: Beide Kalender blocken sich dann
-   gegenseitig als belegt.
-6. Klappe die Karte des Outlook-Kontos auf. Wähle für das Google-Ziel **Mit Titel** oder **Alles**.
-   Die Zeile **Dort:** zeigt das Ergebnis.
+4. Melde dich an und verbinde beide Konten auf der Seite **Kalender** mit **Kalender verbinden**.
+5. Wähle auf der Seite **Spiegelung** **Alle als belegt spiegeln**: Beide Kalender zeigen dann die
+   Termine des anderen als belegt.
+6. Öffne die Zeile vom Outlook-Kalender zum Google Kalender. Wähle unter **Was kopiert wird**
+   **Titel** oder **Alles** und stelle **Was andere sehen** auf **Wie bei dir**. Die Vorschau zeigt
+   das Ergebnis.
 7. Wähle **Speichern**.
 
 ## Gut zu wissen
@@ -50,7 +51,8 @@ Anbieter sie meldet. Ohne `PUBLIC_URL` kommt die Änderung beim nächsten Lauf a
 - Termine, die in der Quelle als privat markiert sind, tragen nie mehr als „Belegt“.
 - Ganztägige Termine wie Feiertage werden standardmäßig gespiegelt und blocken den ganzen Tag.
   Termine, die als frei markiert sind, bleiben draußen. Um alle ganztägigen Termine auszulassen,
-  schalte **Ganztägige Termine auslassen** unter **Für alle Kalender** ein.
+  schalte **Ganztägige Termine überspringen** unter **Für alle Spiegelungen** auf der Seite
+  **Spiegelung** ein.
 
 ## Fragen
 
@@ -63,10 +65,10 @@ personal Microsoft accounts**. Auf der Google-Seite verbindet es Google-Konten.
 
 ### Sieht der Google Kalender die Titel meiner Outlook-Termine?
 
-Standardmäßig nicht. Auf der Stufe **Als belegt** trägt eine Kopie nur den Titel aus **Titel
-belegter Blöcke**, standardmäßig „Belegt“. Titel, Ort und Teilnehmende des Termins bleiben draußen.
-**Mit Titel** fügt den Titel hinzu, **Alles** weitere Details. Du wählst die Stufe für jede
-Richtung, und die Zeile **Dort:** zeigt das Ergebnis.
+Standardmäßig nicht. Auf der Stufe **Nur belegt** trägt eine Kopie nur den Titel aus **Titel
+der Kopien bei „Nur belegt“**, standardmäßig „Belegt“. Titel, Ort und Teilnehmende des Termins bleiben draußen.
+**Titel** fügt den Titel hinzu, **Alles** weitere Details. Du wählst die Stufe für jede
+Spiegelung, und die Vorschau zeigt das Ergebnis.
 
 ### Was passiert mit einer Serie?
 

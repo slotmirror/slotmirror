@@ -1,0 +1,8 @@
+# Cache rules of the assets layer. Everything under /next/ is addressed by content: CSS and JS
+# carry the content hash in the file name (base.<hash>.css, see scripts/asset-manifest-lib.mjs) and
+# the font carries its version (inter-4.001.woff2). A changed file gets a new URL, so a year is
+# safe, and a wrong hash is a 404 that nothing caches. Files at fixed paths (manifest.webmanifest,
+# favicon, app icons) match no rule here and keep the default caching. The app pages are no files:
+# `/mirroring` and the other page addresses are served by the Worker, never by this layer.
+/next/*
+  Cache-Control: public, max-age=31536000, immutable

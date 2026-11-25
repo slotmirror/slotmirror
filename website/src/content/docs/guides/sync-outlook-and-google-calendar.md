@@ -27,7 +27,7 @@ reports it. Without it, the change arrives at the next run, after up to 10 minut
 ## What you get
 
 - Work events appear in Google Calendar, with titles if you want.
-- Google events appear in Outlook as "Busy", marked private.
+- Google events appear in Outlook as private events.
 - A moved or cancelled meeting moves or removes its copy.
 
 ## Steps
@@ -36,10 +36,12 @@ reports it. Without it, the change arrives at the next run, after up to 10 minut
 2. Create a [Microsoft Entra app](../../docs/entra-setup/) and a
    [Google OAuth client](../../docs/google-setup/).
 3. Set `PUBLIC_URL`, so that the providers notify your deployment of changes.
-4. Sign in and connect both accounts under **Accounts**.
-5. On the **Rules** page, use **Quick start**: both calendars then block each other as busy.
-6. Expand the card of the Outlook account. For the Google target, choose **With title** or
-   **Everything**. The line **There:** shows the result.
+4. Sign in and connect both accounts on the **Calendars** page with **Connect calendar**.
+5. On the **Mirroring** page, choose **Mirror all as busy**: both calendars then show each other's
+   events as busy.
+6. Open the row from the Outlook calendar to the Google calendar. Under **What is copied**, choose
+   **Title** or **Everything**, and set **What others see** to **Same as you**. The preview shows
+   the result.
 7. Choose **Save**.
 
 ## Things to know
@@ -48,7 +50,7 @@ reports it. Without it, the change arrives at the next run, after up to 10 minut
 - Events marked private in the source never carry more than "Busy".
 - All-day events such as holidays are mirrored by default, so they block a whole day. Events that
   are marked as free stay out. To leave out all all-day events, turn on **Skip all-day events**
-  under **For all calendars**.
+  under **For all mirrorings** on the **Mirroring** page.
 
 ## Questions
 
@@ -61,10 +63,10 @@ organizational directory and personal Microsoft accounts** in the
 
 ### Does Google Calendar see the titles of my Outlook meetings?
 
-Not by default. At the level **As busy**, a copy carries only the title from **Title of busy
-blocks**, "Busy" by default. The title, the location and the attendees of the meeting stay out.
-**With title** adds the title, and **Everything** adds more detail. You choose the level for each
-direction, and the line **There:** shows the result.
+Not by default. At the level **Busy only**, a copy carries only the title from **Title of busy
+copies**, "Busy" by default. The title, the location and the attendees of the meeting stay out.
+**Title** adds the title, and **Everything** adds more detail. You choose the level for each
+mirroring, and the preview shows the result.
 
 ### What happens to a recurring meeting?
 

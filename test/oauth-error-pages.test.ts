@@ -245,8 +245,8 @@ describe("other provider errors", () => {
     const reference = /Reference<\/dt><dd><code>([0-9a-f]{8})<\/code>/.exec(html)?.[1];
     expect(reference).toBeDefined();
     const logged = JSON.stringify(log.mock.calls);
-    expect(logged).toContain(`ref=${reference}`);
-    expect(logged).toContain("code=AADSTS7000215");
+    expect(logged).toContain(`"reference":"${reference}"`);
+    expect(logged).toContain('"code":"AADSTS7000215"');
     expect(logged).not.toContain("bob@corp.example");
     expect(html).not.toContain("bob@corp.example");
   });
@@ -321,24 +321,26 @@ describe("return from the admin consent link", () => {
 });
 
 describe("Google notice", () => {
-  it("shows two lines under the Google button", async () => {
+  it("folds the Google warning hint under the Google button", async () => {
     const html = await (await exports.default.fetch(`${BASE}/`)).text();
     expect(html).toContain("/auth/google/login");
-    expect(html).toContain("not verified");
+    expect(html).toContain("About Google’s warning screen");
+    expect(html).toContain("hasn’t verified this app");
     expect(html).toContain("Advanced");
   });
 
   it("shows the notice under the connect buttons", async () => {
     const { cookie } = await signIn("owner@example.com");
-    const html = await fetchWith("/", {}, cookie);
+    const html = await fetchWith("/calendars", {}, cookie);
     expect(html).toContain("/auth/google/connect");
-    expect(html).toContain("not verified");
+    expect(html).toContain("hasn’t verified this app");
   });
 
   it("hides the notice on the sign-in page if Google is off", async () => {
     const html = await fetchWith("/", { SIGN_IN_PROVIDERS: "microsoft" });
     expect(html).not.toContain("/auth/google/login");
-    expect(html).not.toContain("not verified");
+    expect(html).not.toContain("hasn’t verified this app");
+    expect(html).not.toContain("About Google’s warning screen");
   });
 
   it("hides the notice under the connect buttons if Google is off", async () => {

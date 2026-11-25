@@ -15,6 +15,8 @@ export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations");
   return {
     test: {
+      // Rewrites src/asset-manifest.ts if public/next changed, so a run never sees a stale manifest.
+      globalSetup: ["./test/asset-manifest-setup.ts"],
       projects: [
         {
           // workerd with the real `cloudflare:*` modules, as on Cloudflare.
