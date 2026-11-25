@@ -142,6 +142,7 @@ export function ruleDetailsError(t: Messages, problem: RuleDetailsProblem): stri
         incomplete: t.editor.passCategoriesIncomplete,
         tooMany: t.editor.passCategoriesTooMany(MAX_PASS_CATEGORIES),
         tentative: t.editor.passCategoriesTentative,
+        calendar: t.editor.passCategoriesCalendar,
       }[problem.reason];
     case "direction":
       if (problem.field === "onlyCategories") return t.editor.onlyCategoriesDirection;

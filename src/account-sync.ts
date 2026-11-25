@@ -1849,10 +1849,13 @@ export class AccountSync extends DurableObject<Env> {
     ]);
     const existing = blocks.filter((block) => block.ruleTag === ruleTag);
     const claimed = claimsFrom(blocks.filter((block) => block.ruleTag !== ruleTag));
-    const desired = await desiredBlocks(rule.id, sourceEvents, ruleOptions, {
-      scope: rule.userId,
-      claimed,
-    });
+    const desired = await desiredBlocks(
+      rule.id,
+      sourceEvents,
+      ruleOptions,
+      { scope: rule.userId, claimed },
+      rule.source.calendarId,
+    );
     // A run reads the edge only for a block at the edge without a wanted event; see `planSync`.
     // That is not rare. With a source at UTC or east of it, the main read no longer returns
     // yesterday's all-day event after midnight UTC, even if the event exists. The same holds for

@@ -1,4 +1,4 @@
-import type { RuleOptions } from "../config";
+import { passCalendarKey, type RuleOptions } from "../config";
 import type {
   BlockContent,
   DesiredBlock,
@@ -53,8 +53,15 @@ function included(
  * The block content for a source event at the rule's detail level.
  * Events the source marks private never carry more than "busy", whatever the rule says.
  * The buffers widen timed blocks only; the times of all-day blocks are dates.
+ * `sourceCalendarId` is the slotmirror ID of the rule's source calendar. A `passCategories` row
+ * for that calendar matches every event; empty, no such row matches.
  */
-export function blockContent(event: SourceEvent, options: RuleOptions): BlockContent {
+export function blockContent(
+  event: SourceEvent,
+  options: RuleOptions,
+  sourceCalendarId = "",
+): BlockContent {
+  const matches = rowMatcher(event, options, sourceCalendarId);
   const level = event.isPrivate ? "busy" : options.detailLevel;
   const withTitle = level !== "busy" && event.subject.trim() !== "";
   const status = event.showAs === "unknown" ? "busy" : event.showAs;
@@ -62,32 +69,62 @@ export function blockContent(event: SourceEvent, options: RuleOptions): BlockCon
     start: event.allDay ? event.start : shifted(event.start, -options.bufferBefore),
     end: event.allDay ? event.end : shifted(event.end, options.bufferAfter),
     allDay: event.allDay,
-    showAs: status === "busy" && passesTentative(event, options) ? "tentative" : status,
+    showAs: status === "busy" && passesTentative(matches, options) ? "tentative" : status,
     isPrivate: options.markPrivate || event.isPrivate,
     subject: withTitle ? event.subject : options.blockTitle,
     location: level === "title_location" || level === "full" ? event.location : "",
     body: level === "full" ? event.body : "",
     ...(options.blockColor.trim() ? { color: options.blockColor.trim() } : {}),
-    ...passedCategories(event, options),
+    ...passedCategories(matches, options),
+  };
+}
+
+/**
+ * How the `from` of a `passCategories` row matches an event: through a category, through the
+ * source calendar, or not at all. Null if no row can match.
+ */
+type RowMatcher = ((from: string) => "category" | "calendar" | false) | null;
+
+/**
+ * A row matches if its `from` is a category of the event, compared trimmed and without case, or
+ * the key of the rule's source calendar, compared exactly, because it holds an ID. A category row
+ * matches as before, also one that starts with the calendar prefix: an Outlook name can.
+ */
+function rowMatcher(
+  event: SourceEvent,
+  options: RuleOptions,
+  sourceCalendarId: string,
+): RowMatcher {
+  if (options.passCategories.length === 0) return null;
+  const calendar = sourceCalendarId === "" ? "" : passCalendarKey(sourceCalendarId);
+  if (event.categories.length === 0 && calendar === "") return null;
+  const own = new Set(event.categories.map(categoryKey));
+  return (from) => {
+    const key = categoryKey(from);
+    if (key === "") return false;
+    if (own.has(key)) return "category";
+    return calendar !== "" && from.trim() === calendar ? "calendar" : false;
   };
 }
 
 /**
  * The `categories` of a block: the target value of each `passCategories` entry whose `from` matches
- * a category of the event, in list order and each once, compared without case. A blank `to` takes
- * `from` as written, and the colour ID for a Google colour "color:<id>". Empty without a match, so
- * that the content stays as before. Categories pass also for an event the source marks private:
- * the list holds only names that the user chose to show, unlike the title or the body.
+ * a category of the event, compared without case, or names the rule's source calendar. In list
+ * order and each once. A blank `to` takes `from` as written, and the colour ID for a Google colour
+ * "color:<id>". Empty without a match, so that the content stays as before. Categories pass also
+ * for an event the source marks private: the list holds only names that the user chose to show,
+ * unlike the title or the body.
  */
-function passedCategories(event: SourceEvent, options: RuleOptions): { categories?: string[] } {
-  if (options.passCategories.length === 0 || event.categories.length === 0) return {};
-  const own = new Set(event.categories.map(categoryKey));
+function passedCategories(matches: RowMatcher, options: RuleOptions): { categories?: string[] } {
+  if (matches === null) return {};
   const values: string[] = [];
   const seen = new Set<string>();
   for (const { from, to } of options.passCategories) {
-    const key = categoryKey(from);
-    if (key === "" || !own.has(key)) continue;
-    const value = to.trim() || blankTarget(from);
+    const match = matches(from);
+    if (!match) continue;
+    // A blank target of a calendar row gives nothing, so that a calendar ID never becomes a
+    // category. The editor refuses such a row anyway.
+    const value = to.trim() || (match === "calendar" ? "" : blankTarget(from));
     if (value === "" || seen.has(value.toLowerCase())) continue;
     seen.add(value.toLowerCase());
     values.push(value);
@@ -96,8 +133,7 @@ function passedCategories(event: SourceEvent, options: RuleOptions): { categorie
 }
 
 /**
- * True if a `passCategories` entry with `tentative` matches a category of the event, compared as
- * in `passedCategories`. The mark belongs to the entry, so it also counts for an entry whose target
+ * True if a `passCategories` entry with `tentative` matches the event, as in `passedCategories`. The mark belongs to the entry, so it also counts for an entry whose target
  * value an earlier entry already gave.
  *
  * The block then shows as tentative, and its dedup key is the key of a tentative block, because
@@ -108,15 +144,9 @@ function passedCategories(event: SourceEvent, options: RuleOptions): { categorie
  * another calendar still writes its busy block, so that the target shows busy where a source says
  * busy. A key from the source status would let the tentative block hide that busy one.
  */
-function passesTentative(event: SourceEvent, options: RuleOptions): boolean {
-  if (event.categories.length === 0) return false;
-  const marked = options.passCategories.filter((entry) => entry.tentative);
-  if (marked.length === 0) return false;
-  const own = new Set(event.categories.map(categoryKey));
-  return marked.some(({ from }) => {
-    const key = categoryKey(from);
-    return key !== "" && own.has(key);
-  });
+function passesTentative(matches: RowMatcher, options: RuleOptions): boolean {
+  if (matches === null) return false;
+  return options.passCategories.some(({ from, tentative }) => tentative && matches(from) !== false);
 }
 
 /** The value of a blank `to`: the colour ID for a Google colour key, else the name as written. */
@@ -267,12 +297,14 @@ function isClaimed(
  * that rules with precedence wrote into the same calendar. The rule leaves out an event whose
  * block would look the same and that such a block covers, buffers included, so that an event in
  * several source calendars is blocked once. A rule with a wider buffer still writes its own block.
+ * `sourceCalendarId` is the slotmirror ID of the rule's source calendar; see `blockContent`.
  */
 export async function desiredBlocks(
   ruleId: string,
   events: SourceEvent[],
   options: RuleOptions,
   dedup: { scope: string; claimed?: ReadonlySet<string> | Claims } = { scope: "" },
+  sourceCalendarId = "",
 ): Promise<DesiredBlock[]> {
   const blocks = new Map<string, DesiredBlock>();
   const buffered = options.bufferBefore > 0 || options.bufferAfter > 0;
@@ -281,7 +313,7 @@ export async function desiredBlocks(
   // Most hashes are cached; the loop awaits only those that are not.
   for (const event of events) {
     if (!included(event, options, skipped, required)) continue;
-    const content = blockContent(event, options);
+    const content = blockContent(event, options, sourceCalendarId);
     // The dedup key uses the event's times, so that rules with different buffers find one meeting.
     const keyed = buffered ? { ...content, start: event.start, end: event.end } : content;
     const dedupHash = cachedHash(dedupText(dedup.scope, keyed));

@@ -166,13 +166,20 @@ export const mirroringEn = {
       "A copy of an event with a listed category gets the colour of its row; the first matching row wins over the colour of the copies. Nothing else passes. Clear a name to remove its row.",
     /** Google to Outlook: each row gives a colour of the source a category in the target. */
     rowsHintColors:
-      "A copy of an event in a listed colour gets the category of its row. Nothing else passes. Clear a name to remove its row.",
+      "A copy of an event in a listed colour, or of any event from a listed calendar, gets the category of its row. Nothing else passes. Clear a name to remove its row.",
     placeholder: "e.g. Focus",
     /** The accessible names of the two fields of a row. */
     category: (calendar: string) => `Category in ${calendar}`,
     color: (calendar: string) => `Colour in ${calendar}`,
     /** The empty choice of a row's colour. */
     chooseColor: "Choose a colour",
+    /**
+     * Google to Outlook: a choice in a row's colour list that matches every event of one source
+     * calendar, also events without a colour, such as those that Todoist writes.
+     */
+    allEvents: (calendar: string) => `All events from ${calendar}`,
+    /** The same choice for a stored row whose calendar slotmirror no longer knows. */
+    allEventsRemoved: "All events from a removed calendar",
     addRow: "Add a row",
     /**
      * Google to Outlook: the switch of a row that shows the copy of a busy event as tentative.
@@ -206,6 +213,9 @@ export const mirroringEn = {
     passTooMany: (max: number) => `You can carry at most ${max} categories.`,
     /** A tentative row in a direction other than Google to Outlook; the panel shows no switch. */
     passTentative: "Only a copy from Google in Outlook can show as tentative. Reload the page.",
+    /** A row for all events of a calendar that is no longer a source of the mirroring. */
+    passCalendar:
+      "A row names a calendar that is no longer a source of this mirroring. Clear the category in its row.",
     /** A copied level of a mirroring with mixed marks, without an answer to "What others see". */
     whoRequired: (from: string) =>
       `Choose what others see. Your answer applies to each calendar of ${from}.`,
@@ -463,11 +473,13 @@ export const mirroringDe: MirroringMessages = {
     rowsHint:
       "Die Kopie eines Termins mit einer gelisteten Kategorie bekommt die Farbe ihrer Zeile; die erste passende Zeile geht vor der Farbe der Kopien. Sonst wird nichts übernommen. Lösche einen Namen, um seine Zeile zu entfernen.",
     rowsHintColors:
-      "Die Kopie eines Termins in einer gelisteten Farbe bekommt die Kategorie ihrer Zeile. Sonst wird nichts übernommen. Lösche einen Namen, um seine Zeile zu entfernen.",
+      "Die Kopie eines Termins in einer gelisteten Farbe oder eines Termins aus einem gelisteten Kalender bekommt die Kategorie ihrer Zeile. Sonst wird nichts übernommen. Lösche einen Namen, um seine Zeile zu entfernen.",
     placeholder: "z. B. Fokus",
     category: (calendar) => `Kategorie in ${calendar}`,
     color: (calendar) => `Farbe in ${calendar}`,
     chooseColor: "Farbe wählen",
+    allEvents: (calendar) => `Alle Termine aus ${calendar}`,
+    allEventsRemoved: "Alle Termine aus einem entfernten Kalender",
     addRow: "Zeile hinzufügen",
     tentative: "Mit Vorbehalt",
     tentativeIn: (calendar) => `Mit Vorbehalt in ${calendar}`,
@@ -488,6 +500,8 @@ export const mirroringDe: MirroringMessages = {
     passTooMany: (max) => `Du kannst höchstens ${max} Kategorien übernehmen.`,
     passTentative:
       "Nur eine Kopie von Google in Outlook kann „Mit Vorbehalt“ zeigen. Lade die Seite neu.",
+    passCalendar:
+      "Eine Zeile nennt einen Kalender, der keine Quelle dieser Spiegelung mehr ist. Lösche die Kategorie in ihrer Zeile.",
     whoRequired: (from) =>
       `Wähle, was andere sehen. Deine Antwort gilt für jeden Kalender aus ${from}.`,
   },

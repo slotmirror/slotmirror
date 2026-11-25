@@ -4,7 +4,7 @@
  */
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setDirection, setDirections, setRuleDetails } from "../src/editor";
+import { passCategoriesFor, setDirection, setDirections, setRuleDetails } from "../src/editor";
 import { en } from "../src/i18n/en";
 import { directionChanges } from "../src/pages/next/mirroring";
 import { BASE, signIn } from "./helpers";
@@ -665,5 +665,170 @@ describe("directionChanges for the carried categories", () => {
     expect(directionChanges(form([shown, ["passColor", "color:5"]]), google).fields).toEqual([
       "passColor",
     ]);
+  });
+});
+
+describe("carried categories for all events of a source calendar", () => {
+  /** The setup, plus a second source calendar "Todoist" in the Google account, without colours. */
+  async function withTodoist(prefix: string) {
+    const ids = await setup(prefix);
+    const todoist = `${ids.g}-todoist`;
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Todoist', 0, 0, 1)",
+    )
+      .bind(todoist, ids.g, `${todoist}-remote`)
+      .run();
+    await setDirection(env, ids.user, ids.g, ids.w, "busy");
+    return { ...ids, todoist, main: `${ids.g}-cal` };
+  }
+
+  /** The carried categories of every rule from the Google account into `w`, by source calendar. */
+  async function passByCalendar(w: string): Promise<Record<string, Pair[] | undefined>> {
+    const { results } = await env.DB.prepare(
+      `SELECT r.source_calendar_id AS calendar, r.options FROM rules r
+       JOIN calendars tc ON tc.id = r.target_calendar_id
+       WHERE tc.account_id = ? ORDER BY r.source_calendar_id`,
+    )
+      .bind(w)
+      .all<{ calendar: string; options: string }>();
+    return Object.fromEntries(
+      results.map((row) => [
+        row.calendar,
+        (JSON.parse(row.options) as { passCategories?: Pair[] }).passCategories,
+      ]),
+    );
+  }
+
+  function ticked(pairs: [string, string][], indexes: number[]): [string, string][] {
+    return [
+      ...rows(pairs),
+      ...indexes.map((index): [string, string] => ["passTentative", String(index)]),
+    ];
+  }
+
+  it("accepts only a source calendar of the direction, and only from Google to Outlook", () => {
+    const row = { from: "calendar:cal-a", to: "Work Blocker", tentative: true };
+    expect(passCategoriesFor("google", "microsoft", [row], ["cal-a", "cal-b"])).toEqual({
+      pairs: [row],
+    });
+    expect(passCategoriesFor("google", "microsoft", [row], ["cal-b"])).toEqual({
+      problem: "calendar",
+    });
+    expect(passCategoriesFor("google", "microsoft", [row])).toEqual({ problem: "calendar" });
+    expect(
+      passCategoriesFor("google", "google", [{ ...row, to: "3", tentative: false }], ["cal-a"]),
+    ).toEqual({ problem: "from" });
+    // An Outlook name may start with the prefix: it stays a name.
+    expect(
+      passCategoriesFor("microsoft", "google", [{ ...row, to: "3", tentative: false }], ["cal-a"]),
+    ).toEqual({ pairs: [{ ...row, to: "3", tentative: false }] });
+    expect(passCategoriesFor("google", "microsoft", [{ ...row, to: " " }], ["cal-a"])).toEqual({
+      problem: "incomplete",
+    });
+  });
+
+  it("offers each source calendar in the colour list from Google to Outlook only", async () => {
+    const { user, cookie, w, g, todoist, main } = await withTodoist("mpcalshow");
+    const row = passRow(await panel(cookie, g, w));
+    const first = row.slice(row.indexOf('<select name="passFrom"'), row.indexOf("</select>"));
+    expect(first).toContain(`<option value="calendar:${todoist}">All events from Todoist</option>`);
+    expect(first).toContain(`<option value="calendar:${main}">All events from Main</option>`);
+    // The colours come first, so that the list reads as before.
+    expect(first.indexOf('value="color:11"')).toBeLessThan(first.indexOf("calendar:"));
+    await setDirection(env, user, w, g, "busy");
+    expect(passRow(await panel(cookie, w, g))).not.toContain("calendar:");
+  });
+
+  it("stores a calendar row from the panel, shows it again, saves it unchanged and clears it", async () => {
+    const { user, cookie, w, g, todoist, main } = await withTodoist("mpcalsave");
+    const pairs: [string, string][] = [
+      ["color:8", "Work Blocker"],
+      [`calendar:${todoist}`, "Work Blocker"],
+      ["", ""],
+    ];
+    expect((await save(cookie, panelForm(g, w, ticked(pairs, [0, 1])))).status).toBe(303);
+    const stored = [
+      { from: "color:8", to: "Work Blocker", tentative: true },
+      { from: `calendar:${todoist}`, to: "Work Blocker", tentative: true },
+    ];
+    // Every rule of the direction holds the list; the planner applies the row to its calendar.
+    expect(await passByCalendar(w)).toEqual({ [main]: stored, [todoist]: stored });
+
+    const row = passRow(await panel(cookie, g, w));
+    const second = row.split('class="mx-pass-row"')[2] ?? "";
+    expect(second).toContain(
+      `<option value="calendar:${todoist}" selected="">All events from Todoist</option>`,
+    );
+    expect(second).toMatch(/name="passTo"[^>]*value="Work Blocker"/);
+
+    const options = () =>
+      env.DB.prepare("SELECT id, options FROM rules WHERE user_id = ? ORDER BY id")
+        .bind(user.id)
+        .all();
+    const before = (await options()).results;
+    expect(before).toHaveLength(2);
+    const unchanged = panelForm(g, w, [["blockColor", ""], ...ticked(pairs, [0, 1])]);
+    expect((await save(cookie, unchanged)).status).toBe(303);
+    expect((await options()).results).toEqual(before);
+
+    const cleared: [string, string][] = [
+      ["color:8", "Work Blocker"],
+      [`calendar:${todoist}`, ""],
+    ];
+    expect((await save(cookie, panelForm(g, w, ticked(cleared, [0])))).status).toBe(303);
+    const kept = [{ from: "color:8", to: "Work Blocker", tentative: true }];
+    expect(await passByCalendar(w)).toEqual({ [main]: kept, [todoist]: kept });
+  });
+
+  it("refuses a calendar that is not a source of the direction, in the panel and the batch", async () => {
+    const { cookie, w, g } = await withTodoist("mpcalforeign");
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Holidays', 0, 0, 0)",
+    )
+      .bind(`${g}-holidays`, g, `${g}-holidays-remote`)
+      .run();
+    const other = await setup("mpcalother");
+    for (const calendar of [`${w}-cal`, `${g}-holidays`, `${other.g}-cal`, "no-such-calendar"]) {
+      const response = await save(
+        cookie,
+        panelForm(g, w, rows([[`calendar:${calendar}`, "Work Blocker"]])),
+      );
+      expect(response.status, calendar).toBe(400);
+      expect(decode(await response.text())).toContain(
+        `<p class="prop-error" id="mx-pass-error">${en.next.mirroring.fieldErrors.passCalendar}</p>`,
+      );
+      const batch = await saveBatch(cookie, `passCategories.${g}.${w}`, [
+        [`calendar:${calendar}`, "Work Blocker"],
+      ]);
+      expect(batch.status, calendar).toBe(400);
+      expect(await batch.text()).toContain(en.editor.passCategoriesCalendar);
+    }
+    expect(await passByCalendar(w)).toEqual({ [`${g}-cal`]: [], [`${g}-todoist`]: [] });
+  });
+
+  it("keeps a row whose calendar is no longer a source, so that it can be cleared", async () => {
+    const { user, cookie, w, g, todoist } = await withTodoist("mpcalstale");
+    await setRuleDetails(env, user, {
+      passCategories: [
+        {
+          from: g,
+          to: w,
+          pairs: [{ from: `calendar:${todoist}`, to: "Work Blocker", tentative: true }],
+        },
+      ],
+    });
+    await env.DB.prepare("UPDATE calendars SET is_source = 0 WHERE id = ?").bind(todoist).run();
+    const row = passRow(await panel(cookie, g, w));
+    expect(row).toContain(
+      `<option value="calendar:${todoist}" selected="">All events from Todoist</option>`,
+    );
+    // The row is no longer valid: saving it as shown is refused at the field; clearing it saves.
+    const shown = [[`calendar:${todoist}`, "Work Blocker"]] as [string, string][];
+    const refused = await save(cookie, panelForm(g, w, ticked(shown, [0])));
+    expect(refused.status).toBe(400);
+    expect(decode(await refused.text())).toContain(en.next.mirroring.fieldErrors.passCalendar);
+    const cleared = [[`calendar:${todoist}`, ""]] as [string, string][];
+    expect((await save(cookie, panelForm(g, w, rows(cleared)))).status).toBe(303);
+    expect((await passByCalendar(w))[`${g}-cal`]).toEqual([]);
   });
 });

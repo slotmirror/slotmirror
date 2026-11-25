@@ -1,7 +1,13 @@
 import type { Query } from "./batch";
 import { auditStatement, recordAudit, type AuditEvent } from "./audit";
 import { resolveAccountColorState, type AccountColor } from "./colors";
-import { parseRuleOptions, ruleOptionsSchema, type Provider, type RuleOptions } from "./config";
+import {
+  PASS_CALENDAR_PREFIX,
+  parseRuleOptions,
+  ruleOptionsSchema,
+  type Provider,
+  type RuleOptions,
+} from "./config";
 import { detailLevelFor, type AccountIdentity, type DetailLevel } from "./detail-policy";
 import { accountSync } from "./durable";
 import { displayTimeZone } from "./i18n";
@@ -1135,13 +1141,37 @@ export type StoredPassPair = Required<PassPair>;
 
 /**
  * Why a list of carried categories is not valid for a direction. `tentative`: a row asks for a
- * tentative copy in a direction other than Google to Outlook.
+ * tentative copy in a direction other than Google to Outlook. `calendar`: a row names a calendar
+ * that is not a source calendar of the direction.
  */
-export type PassProblem = "from" | "to" | "incomplete" | "tooMany" | "tentative";
+export type PassProblem = "from" | "to" | "incomplete" | "tooMany" | "tentative" | "calendar";
 
 /** True if copies of a direction can show as tentative through a carried category. */
 export function canPassTentative(source: Provider, target: Provider): boolean {
   return source === "google" && target === "microsoft";
+}
+
+/**
+ * True if a direction takes rows for a whole source calendar (`calendar:<ID>`). Only from Google
+ * to Outlook: there each row picks its source from a list, which can hold the calendars too.
+ * Outlook names are typed, so a name can start with the prefix, and between two Google calendars
+ * the panel shows colour boxes only.
+ */
+export function canPassCalendar(source: Provider, target: Provider): boolean {
+  return source === "google" && target === "microsoft";
+}
+
+/** The slotmirror IDs of the source calendars of a direction, for `passCategoriesFor`. */
+export function passSourceCalendars(direction: Pick<EditorDirection, "slots">): string[] {
+  return direction.slots.map((slot) => slot.sourceCalendarId);
+}
+
+/** The calendar ID of a carried row's source `calendar:<ID>`, or null for a category or colour. */
+export function passCalendarOf(from: string): string | null {
+  const trimmed = from.trim();
+  return trimmed.startsWith(PASS_CALENDAR_PREFIX)
+    ? trimmed.slice(PASS_CALENDAR_PREFIX.length)
+    : null;
 }
 
 /**
@@ -1153,11 +1183,18 @@ export function canPassTentative(source: Provider, target: Provider): boolean {
  * between calendars of one provider a row whose `from` repeats. The first row wins, also if a
  * repeated row has another `tentative`. A row with `tentative` outside Google to Outlook is
  * refused, not dropped: the person asked for something that the target would not show.
+ *
+ * From Google to Outlook, `from` can also name a whole source calendar as `calendar:<ID>`, for
+ * events without a colour, such as those that Todoist writes. The ID must be one of
+ * `sourceCalendars`, the slotmirror IDs of the direction's source calendars; any other is refused,
+ * so that a row never names a calendar of another account or user. Without the list no calendar
+ * row passes.
  */
 export function passCategoriesFor(
   source: Provider,
   target: Provider,
   pairs: readonly PassPair[],
+  sourceCalendars: readonly string[] = [],
 ): { pairs: StoredPassPair[] } | { problem: PassProblem } {
   const seen = new Set<string>();
   const result: StoredPassPair[] = [];
@@ -1171,10 +1208,16 @@ export function passCategoriesFor(
       }
       continue;
     }
+    const calendar = source === "google" ? passCalendarOf(from) : null;
+    if (calendar !== null) {
+      if (!canPassCalendar(source, target)) return { problem: "from" };
+      if (!sourceCalendars.includes(calendar)) return { problem: "calendar" };
+    }
     const fits =
-      source === "google"
+      calendar !== null ||
+      (source === "google"
         ? GOOGLE_COLOR_CATEGORY.test(from)
-        : blockColorFor("microsoft", from) !== null;
+        : blockColorFor("microsoft", from) !== null);
     if (!fits) return { problem: "from" };
     const to = blockColorFor(target, pair.to);
     if (to === null) return { problem: "to" };
@@ -1349,9 +1392,14 @@ export function ruleDetailsProblem(
   for (const { from, to, pairs } of details.passCategories ?? []) {
     const source = state.accounts.find((account) => account.id === from);
     const target = state.accounts.find((account) => account.id === to);
-    const known = state.directions.some((d) => d.from === from && d.to === to);
-    if (!source || !target || !known) return { kind: "direction", field: "passCategories" };
-    const checked = passCategoriesFor(source.provider, target.provider, pairs);
+    const direction = state.directions.find((d) => d.from === from && d.to === to);
+    if (!source || !target || !direction) return { kind: "direction", field: "passCategories" };
+    const checked = passCategoriesFor(
+      source.provider,
+      target.provider,
+      pairs,
+      passSourceCalendars(direction),
+    );
     if ("problem" in checked) return { kind: "passCategories", reason: checked.problem };
   }
   return null;
@@ -1430,7 +1478,8 @@ export async function setRuleDetails(
     const target = state.accounts.find((account) => account.id === to);
     const direction = state.directions.find((d) => d.from === from && d.to === to);
     if (!source || !target || !direction) continue;
-    const checked = passCategoriesFor(source.provider, target.provider, pairs);
+    const calendars = passSourceCalendars(direction);
+    const checked = passCategoriesFor(source.provider, target.provider, pairs, calendars);
     if ("pairs" in checked) forDirection(direction, { passCategories: checked.pairs });
   }
   await writePatches(env, user, patches, accounts, syncs);
@@ -1607,6 +1656,7 @@ export interface DirectionDetails {
 function directionPatch(
   source: EditorAccount,
   target: EditorAccount,
+  direction: EditorDirection,
   details: DirectionDetails,
 ): Partial<RuleOptions> {
   const patch: Partial<RuleOptions> = {};
@@ -1618,7 +1668,12 @@ function directionPatch(
   else if (details.workHours === true && target.workHours) Object.assign(patch, target.workHours);
   if (details.onlyCategories !== undefined) patch.onlyCategories = details.onlyCategories;
   if (details.passCategories !== undefined) {
-    const checked = passCategoriesFor(source.provider, target.provider, details.passCategories);
+    const checked = passCategoriesFor(
+      source.provider,
+      target.provider,
+      details.passCategories,
+      passSourceCalendars(direction),
+    );
     if ("pairs" in checked) patch.passCategories = checked.pairs;
   }
   return patch;
@@ -1853,7 +1908,9 @@ export async function setDirections(
     // disabled rule's mark is stale: it is the one it had when it was turned off.
     const keptMark = directionMarksPrivate(direction) ?? state.settings.markPrivate;
     const patch =
-      choice === "off" || !change.details ? {} : directionPatch(from, to, change.details);
+      choice === "off" || !change.details
+        ? {}
+        : directionPatch(from, to, direction, change.details);
     const firstStatement = statements.length;
 
     // A parked rule stands for "off". Another choice replaces it, so that it cannot bring back an

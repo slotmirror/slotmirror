@@ -16,6 +16,8 @@ export interface RuleContext {
 
 interface RuleEnd {
   accountId: string;
+  /** The slotmirror ID of the calendar, never the remote one. */
+  calendarId: string;
   provider: string;
   /** The name the user gave the account; null for the name derived from the address. */
   name: string | null;
@@ -34,6 +36,7 @@ interface RuleRow extends OwnerColumns {
   options: string;
   enabled: number;
   sourceAccountId: string;
+  sourceCalendarId: string;
   sourceProvider: string;
   sourceName: string | null;
   sourceRemoteId: string;
@@ -41,6 +44,7 @@ interface RuleRow extends OwnerColumns {
   sourceTenantId: string | null;
   sourceNeedsReconnect: number;
   targetAccountId: string;
+  targetCalendarId: string;
   targetProvider: string;
   targetName: string | null;
   targetRemoteId: string;
@@ -51,10 +55,10 @@ interface RuleRow extends OwnerColumns {
 
 const RULE_SELECT = `
   SELECT r.id, r.user_id AS userId, u.org_id AS orgId, r.options, r.enabled, ${OWNER_COLUMNS},
-         sa.id AS sourceAccountId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
+         sa.id AS sourceAccountId, sc.id AS sourceCalendarId, sa.provider AS sourceProvider, sc.remote_id AS sourceRemoteId,
          sa.email AS sourceEmail, sa.tenant_id AS sourceTenantId, sa.display_name AS sourceName,
          sa.needs_reconnect AS sourceNeedsReconnect,
-         ta.id AS targetAccountId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
+         ta.id AS targetAccountId, tc.id AS targetCalendarId, ta.provider AS targetProvider, tc.remote_id AS targetRemoteId,
          ta.email AS targetEmail, ta.tenant_id AS targetTenantId, ta.display_name AS targetName,
          ta.needs_reconnect AS targetNeedsReconnect
   FROM rules r
@@ -80,6 +84,7 @@ function toContext(row: RuleRow): RuleContext {
     },
     source: {
       accountId: row.sourceAccountId,
+      calendarId: row.sourceCalendarId,
       provider: row.sourceProvider,
       name: row.sourceName,
       remoteCalendarId: row.sourceRemoteId,
@@ -89,6 +94,7 @@ function toContext(row: RuleRow): RuleContext {
     },
     target: {
       accountId: row.targetAccountId,
+      calendarId: row.targetCalendarId,
       provider: row.targetProvider,
       name: row.targetName,
       remoteCalendarId: row.targetRemoteId,

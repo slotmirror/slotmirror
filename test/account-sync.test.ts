@@ -232,6 +232,29 @@ describe("AccountSync.runRule", () => {
     }
   });
 
+  it("gives every block the category of a row that names the rule's source calendar", async () => {
+    // The row names the slotmirror ID of the source calendar; the fixture events have no category.
+    const row = { from: "calendar:acc-cal-row-src", to: "Work Blocker", tentative: true };
+    const { stub, ruleId } = await setupRule("acc-cal-row", { passCategories: [row] });
+    await stub.storeTokens("acc-cal-row", {
+      refreshToken: "r",
+      accessToken: "a",
+      accessExpiresAt: Date.now() + 3_600_000,
+    });
+    const calls = fakeGraph();
+
+    expect(await stub.runRule(ruleId)).toMatchObject({ applied: 16, failed: 0 });
+    const batch = calls.find((call) => call.url.endsWith("/$batch"));
+    const bodies = (
+      JSON.parse(batch?.init?.body as string) as {
+        requests: { body: { categories: string[]; showAs: string } }[];
+      }
+    ).requests.map((request) => request.body);
+    expect(bodies).toHaveLength(16);
+    for (const body of bodies) expect(body.categories).toEqual(["Work Blocker"]);
+    expect(bodies.some((body) => body.showAs === "tentative")).toBe(true);
+  });
+
   it("never deletes blocks that another rule wrote into the same target calendar", async () => {
     const { stub, ruleId } = await setupRule("acc-shared-target");
     await stub.storeTokens("acc-shared-target", {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type * as z from "zod/mini";
-import { ruleOptionsSchema, type RuleOptions } from "../src/config";
+import { passCalendarKey, ruleOptionsSchema, type RuleOptions } from "../src/config";
 import { fromGoogleEvent, googleMarker, LEGACY_GOOGLE_MARKER_KEY } from "../src/sync/google-events";
 import {
   fromGraphEvent,
@@ -1170,5 +1170,88 @@ describe("tentative copies of passed categories", () => {
       claimed,
     });
     expect(markedB).toEqual([]);
+  });
+});
+
+describe("passed categories for a whole source calendar", () => {
+  // Todoist writes its events into a Google calendar of its own, without a colour.
+  const TODOIST = "cal-todoist";
+  const MAIN = "cal-main";
+
+  function event(overrides: Partial<SourceEvent> = {}): SourceEvent {
+    return {
+      occurrenceKey: "event:c",
+      start: "2026-10-26T10:00:00.000Z",
+      end: "2026-10-26T11:00:00.000Z",
+      allDay: false,
+      showAs: "busy",
+      isPrivate: false,
+      declined: false,
+      categories: [],
+      subject: "Task",
+      location: "",
+      body: "",
+      isMirror: false,
+      ...overrides,
+    };
+  }
+
+  const ROWS = [
+    { from: passCalendarKey(TODOIST), to: "Work Blocker", tentative: true },
+    { from: "color:8", to: "Work Blocker", tentative: true },
+  ];
+
+  async function blockFrom(calendarId: string, source: SourceEvent, rows = ROWS) {
+    const opts = options({ passCategories: rows });
+    const [block] = await desiredBlocks(RULE, [source], opts, { scope: "user" }, calendarId);
+    if (!block) throw new Error("no block");
+    return block;
+  }
+
+  it("gives every block from the named calendar the category and the tentative mark", async () => {
+    const block = await blockFrom(TODOIST, event());
+    expect(block).toMatchObject({ showAs: "tentative", categories: ["Work Blocker"] });
+  });
+
+  it("leaves a block from another calendar of the direction as it was", async () => {
+    const source = event();
+    const [plain] = await desiredBlocks(RULE, [source], options(), { scope: "user" }, MAIN);
+    const block = await blockFrom(MAIN, source);
+    expect(JSON.stringify(block)).toBe(JSON.stringify(plain));
+    // Without a calendar ID, as before this option, no calendar row matches either.
+    const [unnamed] = await desiredBlocks(RULE, [source], options({ passCategories: ROWS }), {
+      scope: "user",
+    });
+    expect(JSON.stringify(unnamed)).toBe(JSON.stringify(plain));
+  });
+
+  it("keeps the colour rows working next to a calendar row", async () => {
+    const graphite = await blockFrom(MAIN, event({ categories: ["color:8"] }));
+    expect(graphite).toMatchObject({ showAs: "tentative", categories: ["Work Blocker"] });
+    const other = await blockFrom(MAIN, event({ categories: ["color:5"] }));
+    expect(other).toMatchObject({ showAs: "busy" });
+    expect(other).not.toHaveProperty("categories");
+    const both = await blockFrom(TODOIST, event({ categories: ["color:5"] }), [
+      { from: "color:5", to: "Focus", tentative: false },
+      { from: passCalendarKey(TODOIST), to: "Todoist", tentative: false },
+    ]);
+    expect(both).toMatchObject({ showAs: "busy", categories: ["Focus", "Todoist"] });
+  });
+
+  it("keeps free events free and compares the calendar ID exactly", async () => {
+    const free = event({ showAs: "free" });
+    const opts = options({ passCategories: ROWS, skipFree: false });
+    const [block] = await desiredBlocks(RULE, [free], opts, { scope: "user" }, TODOIST);
+    expect(block).toMatchObject({ showAs: "free", categories: ["Work Blocker"] });
+    const upper = await blockFrom(TODOIST.toUpperCase(), event());
+    expect(upper).toMatchObject({ showAs: "busy" });
+    expect(upper).not.toHaveProperty("categories");
+  });
+
+  it("never writes the calendar ID as a category for a blank target", async () => {
+    const block = await blockFrom(TODOIST, event(), [
+      { from: passCalendarKey(TODOIST), to: " ", tentative: false },
+    ]);
+    expect(block).not.toHaveProperty("categories");
   });
 });

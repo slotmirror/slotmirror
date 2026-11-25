@@ -10,10 +10,14 @@ import {
   type EditorState,
   type Level,
   levelOf,
+  canPassCalendar,
   canPassTentative,
+  passCalendarOf,
   passCategoriesFor,
+  passSourceCalendars,
   type PassPair,
 } from "../../editor";
+import { passCalendarKey } from "../../config";
 import { passPairsFromForm } from "../../form";
 import { useI18n } from "../../i18n";
 import type { MirroringField } from "../../next-mirroring";
@@ -754,17 +758,23 @@ function RowArrow() {
  * From Google to Outlook each row also has a "Tentative" switch, which sends the index of its row
  * as "passTentative". The server renders the saved rows and one empty row, which works without
  * script; the script adds more rows (`mirroring.js`).
+ *
+ * From Google to Outlook the colour list of a row also offers "All events from <calendar>" for
+ * each source calendar of the direction, also if it has only one: Todoist, for example, writes
+ * events without a colour into a calendar of its own. A row whose calendar is no longer a source
+ * keeps its choice, so that the person sees it and can clear it; the save refuses it.
  */
 function PassCategories(props: {
   from: EditorAccount;
   to: EditorAccount;
+  direction: EditorDirection;
   fields: Fields;
   stored: readonly PassPair[];
   error?: string;
 }) {
   const { t } = useI18n();
   const text = t.next.mirroring.pass;
-  const { from, to, fields, stored, error } = props;
+  const { from, to, direction, fields, stored, error } = props;
   const invalid = error !== undefined;
   const sourceIsGoogle = from.provider === "google";
   const shown = <input type="hidden" name="passCategoriesShown" value="1" />;
@@ -829,12 +839,30 @@ function PassCategories(props: {
     rows.push({ from: "", to: "", tentative: false });
   // Only Outlook shows a tentative copy, and only a Google event lacks the status of its own.
   const withTentative = canPassTentative(from.provider, to.provider);
+  const sourceCalendars = passSourceCalendars(direction);
+  const calendarChoices = canPassCalendar(from.provider, to.provider)
+    ? [
+        ...new Set([
+          ...sourceCalendars,
+          ...rows.flatMap((row) => {
+            const id = passCalendarOf(row.from);
+            return id === null ? [] : [id];
+          }),
+        ]),
+      ].map((id) => {
+        const calendar = from.calendars.find((entry) => entry.id === id);
+        return {
+          value: passCalendarKey(id),
+          label: calendar ? text.allEvents(calendar.name) : text.allEventsRemoved,
+        };
+      })
+    : [];
   // After a refusal, the rows that do not fit on their own are marked; a list that is only too long
   // marks none, and the reason stands under the rows. A row without a name is blank, as on save.
   const rowInvalid = (row: PassPair) =>
     invalid &&
     (sourceIsGoogle ? row.to : row.from).trim() !== "" &&
-    "problem" in passCategoriesFor(from.provider, to.provider, [row]);
+    "problem" in passCategoriesFor(from.provider, to.provider, [row], sourceCalendars);
   const name = (
     field: "passFrom" | "passTo",
     value: string,
@@ -859,6 +887,7 @@ function PassCategories(props: {
     prefix: string,
     calendar: EditorAccount,
     marked: boolean,
+    extra: readonly { value: string; label: string }[] = [],
   ) => (
     <span class="select">
       <select
@@ -872,6 +901,11 @@ function PassCategories(props: {
         {GOOGLE_COLORS.map((option) => (
           <option value={`${prefix}${option.id}`} selected={value === `${prefix}${option.id}`}>
             {t.editor.googleColor(option.id)}
+          </option>
+        ))}
+        {extra.map((option) => (
+          <option value={option.value} selected={value === option.value}>
+            {option.label}
           </option>
         ))}
       </select>
@@ -918,7 +952,7 @@ function PassCategories(props: {
           return (
             <div class="mx-pass-row">
               {sourceIsGoogle
-                ? color("passFrom", row.from, "color:", from, marked)
+                ? color("passFrom", row.from, "color:", from, marked, calendarChoices)
                 : name("passFrom", row.from, from, marked)}
               <RowArrow />
               {sourceIsGoogle
@@ -1431,6 +1465,7 @@ function DirectionPanel(
           <PassCategories
             from={from}
             to={to}
+            direction={direction}
             fields={fields}
             stored={options?.passCategories ?? []}
             error={errorAt("passCategories")}
