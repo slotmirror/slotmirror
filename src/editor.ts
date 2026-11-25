@@ -1164,8 +1164,10 @@ export function passSourceCalendars(direction: Pick<EditorDirection, "slots">): 
  * calendars, and each calendar that a row stored on one of its rules names. A stored row whose
  * calendar is no longer a source stays valid, because the panel sends every row with each save
  * and the person did not touch it. It has no effect: no rule of the direction reads that calendar.
- * A new row still needs a source calendar. Stored rows passed this check when they were saved, so
- * the list never admits a calendar of another user or of the target.
+ * A new row still needs a source calendar. Any row may name a calendar that a stored row names,
+ * also with another target or tentative mark: that calendar is the source account's own and was a
+ * source of this direction when its row was saved. Stored rows passed this check when they were
+ * saved, so the list never admits a calendar of another user or of the target.
  */
 export function passCalendarsFor(
   direction: Pick<EditorDirection, "slots" | "parked" | "options">,
@@ -1182,17 +1184,20 @@ export function passCalendarsFor(
 
 /**
  * The state as it is once `calendarIds` are no longer sources, for the check of a save that also
- * turns them off: a new carried row must not name them. The directions keep their stored rows
- * (see `passCalendarsFor`) through `options` and their other rules.
+ * turns them off: a new carried row must not name them. The directions keep the stored rows (see
+ * `passCalendarsFor`) of their other rules. `options` comes from the first rule that stays, as the
+ * reload after the save gives it: the rule it came from may be one that the save deletes.
  */
 export function withoutSources(state: EditorState, calendarIds: ReadonlySet<string>): EditorState {
   if (calendarIds.size === 0) return state;
   return {
     ...state,
-    directions: state.directions.map((direction) => ({
-      ...direction,
-      slots: direction.slots.filter((slot) => !calendarIds.has(slot.sourceCalendarId)),
-    })),
+    directions: state.directions.map((direction) => {
+      const slots = direction.slots.filter((slot) => !calendarIds.has(slot.sourceCalendarId));
+      if (slots.length === direction.slots.length) return direction;
+      const first = slots.find((slot) => slot.rule)?.rule ?? null;
+      return { ...direction, slots, options: first?.options ?? null };
+    }),
   };
 }
 

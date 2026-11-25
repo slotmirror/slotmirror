@@ -134,8 +134,9 @@ function passedCategories(matches: RowMatcher, options: RuleOptions): { categori
 }
 
 /**
- * True if a `passCategories` entry with `tentative` matches the event, as in `passedCategories`. The mark belongs to the entry, so it also counts for an entry whose target
- * value an earlier entry already gave.
+ * True if a `passCategories` entry with `tentative` matches the event, as in `passedCategories`.
+ * The mark belongs to the entry, so it also counts for an entry whose target value an earlier entry
+ * already gave.
  *
  * The block then shows as tentative, and its dedup key is the key of a tentative block, because
  * `dedupText` reads the block status. That is on purpose. The marker, not the dedup key, finds the

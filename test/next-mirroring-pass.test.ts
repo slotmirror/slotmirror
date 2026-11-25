@@ -5,6 +5,7 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  loadEditorState,
   passCategoriesFor,
   setDirection,
   setDirections,
@@ -930,6 +931,42 @@ describe("carried categories for all events of a source calendar", () => {
     expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
     // Nothing was written: Todoist is still a source.
     expect(await passByCalendar(w)).toEqual({ [main]: [], [todoist]: [] });
+  });
+
+  it("refuses a row stored only on a rule that the same batch removes", async () => {
+    // The direction's options come from its first rule. If the batch removes that rule, the check
+    // must not take its rows as stored: after the save no rule holds them.
+    const { cookie, w, g, user } = await withTodoist("mpcalfirst");
+    const state = await loadEditorState(env, user.id);
+    const direction = state.directions.find((d) => d.from === g && d.to === w);
+    const first = direction?.slots.find((slot) => slot.rule);
+    const other = direction?.slots.find((slot) => slot !== first);
+    if (!first?.rule || !other) throw new Error("expected two source calendars with rules");
+    const row = {
+      from: `calendar:${first.sourceCalendarId}`,
+      to: "Work Blocker",
+      tentative: false,
+    };
+    await env.DB.prepare(
+      "UPDATE rules SET options = json_set(options, '$.passCategories', json(?)) WHERE id = ?",
+    )
+      .bind(JSON.stringify([row]), first.rule.id)
+      .run();
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`calendar.${first.sourceCalendarId}`]: "0",
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          [row.from, "Work Blocker"],
+          ["color:8", "Focus"],
+        ]),
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
+    expect((await passByCalendar(w))[other.sourceCalendarId]).toEqual([]);
   });
 
   it("keeps the other details of a batch that turns off a direction with a stale row", async () => {
