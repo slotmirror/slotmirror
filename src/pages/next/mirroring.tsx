@@ -767,7 +767,7 @@ interface ExtraOption {
  * as "passTentative". The server renders the saved rows and one empty row, which works without
  * script; the script adds more rows (`mirroring.js`).
  *
- * From Google to Outlook the colour list of a row also offers "All events from <calendar>" for
+ * From Google to Outlook the colour list of a row also offers "<calendar> (all events)" for
  * each source calendar of the direction, also if it has only one: Todoist, for example, writes
  * events without a colour into a calendar of its own. A stored row whose calendar is no longer a
  * source keeps its choice, marked "not a source" or "removed calendar", so that the person sees

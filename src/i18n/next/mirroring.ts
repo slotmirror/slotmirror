@@ -183,7 +183,7 @@ export const mirroringEn = {
      * The same choice for a stored row whose calendar still exists but is no longer a source of the
      * mirroring. Only the row that holds it offers it; the row has no effect.
      */
-    allEventsNotSource: (calendar: string) => `${calendar} (not a source)`,
+    allEventsNotSource: (calendar: string) => `${calendar} (all events, not a source)`,
     /** The same choice for a stored row whose calendar slotmirror no longer knows. */
     allEventsRemoved: "Removed calendar (all events)",
     addRow: "Add a row",
@@ -488,7 +488,7 @@ export const mirroringDe: MirroringMessages = {
     color: (calendar) => `Farbe in ${calendar}`,
     chooseColor: "Farbe wählen",
     allEvents: (calendar) => `${calendar} (alle Termine)`,
-    allEventsNotSource: (calendar) => `${calendar} (keine Quelle)`,
+    allEventsNotSource: (calendar) => `${calendar} (alle Termine, keine Quelle)`,
     allEventsRemoved: "Entfernter Kalender (alle Termine)",
     addRow: "Zeile hinzufügen",
     tentative: "Mit Vorbehalt",
