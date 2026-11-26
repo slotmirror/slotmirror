@@ -840,7 +840,7 @@ describe("carried categories for all events of a source calendar", () => {
     const [held, empty, ...more] = rowSelects(passRow(await panel(cookie, g, w)));
     expect(more).toEqual([]);
     expect(held).toContain(
-      `<option value="calendar:${todoist}" selected="" data-pass-stale="">Todoist (not a source)</option>`,
+      `<option value="calendar:${todoist}" selected="" data-pass-stale="">Todoist (all events, not a source)</option>`,
     );
     expect(held).toContain(`<option value="calendar:${main}">Main (all events)</option>`);
     // The empty row, which the script copies for a new row, offers the source calendars only.
@@ -931,6 +931,45 @@ describe("carried categories for all events of a source calendar", () => {
     expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
     // Nothing was written: Todoist is still a source.
     expect(await passByCalendar(w)).toEqual({ [main]: [], [todoist]: [] });
+  });
+
+  it("refuses a new row for another calendar when the batch stops every source", async () => {
+    // With no source left, `slots` is empty and the list holds the stored calendars only. A calendar
+    // that is no source and that no stored row names must fail.
+    const { cookie, w, g, user, todoist, main } = await withTodoist("mpcalnone");
+    const side = `${g}-side`;
+    await env.DB.prepare(
+      "INSERT INTO calendars (id, account_id, remote_id, name, can_edit, is_default, is_source) VALUES (?, ?, ?, 'Side', 0, 0, 0)",
+    )
+      .bind(side, g, `${side}-remote`)
+      .run();
+    const stored = { from: `calendar:${main}`, to: "Work Blocker", tentative: true };
+    await setRuleDetails(env, user, { passCategories: [{ from: g, to: w, pairs: [stored] }] });
+    const before = await passByCalendar(w);
+    expect(before[main]).toEqual([stored]);
+    const response = await exports.default.fetch(`${BASE}/rules/choices`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "x-fragment": "1", "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        [`calendar.${main}`]: "0",
+        [`calendar.${todoist}`]: "0",
+        [`passCategories.${g}.${w}`]: JSON.stringify([
+          [stored.from, "Work Blocker", true],
+          [`calendar:${side}`, "Work Blocker"],
+        ]),
+      }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(en.editor.passCategoriesCalendar);
+    // Nothing was written: both calendars are still sources and the rows are unchanged.
+    expect(await passByCalendar(w)).toEqual(before);
+    const { results } = await env.DB.prepare(
+      "SELECT id FROM calendars WHERE account_id = ? AND is_source = 1 ORDER BY id",
+    )
+      .bind(g)
+      .all<{ id: string }>();
+    expect(results.map((row) => row.id)).toEqual([main, todoist].sort());
   });
 
   it("refuses a row stored only on a rule that the same batch removes", async () => {
