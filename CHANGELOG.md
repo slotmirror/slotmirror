@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.5.0...slotmirror-v0.5.1) (2026-11-26)
+
+
+### Bug fixes
+
+* **mirroring:** name the all-events row of a calendar that is no longer a source ([#139](https://github.com/slotmirror/slotmirror/issues/139)) ([11433a3](https://github.com/slotmirror/slotmirror/commit/11433a3be1a220dcf35c8378c9ca9161f8727e40))
+
 ## [0.5.0](https://github.com/slotmirror/slotmirror/compare/slotmirror-v0.4.0...slotmirror-v0.5.0) (2026-11-25)
 
 
